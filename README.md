@@ -11,15 +11,21 @@ Standalone, containerized Python manager for ESP32-C6 e-ink dashboard devices.
   - `Integrations`
 - Designer capabilities:
   - base layout seeded from original firmware style
-  - title bar and footer enable/height controls
-  - section add/remove/resize (`x`,`y`,`w`,`h`)
+  - live browser preview
+  - drag + resize section blocks in preview canvas
+  - preview modes: `Layout Only` and `Real Data` (cached manager data)
+  - advanced mode for manual controls and section JSON tuning
   - section templates: weather, headlines, quote of the day, calendar upcoming
-  - per-section refresh mode and configurable data source
 - Device management capabilities:
   - add/remove devices
   - assign dashboard to device
   - per-device profile overrides
   - rotate device token
+  - raw-device provisioning with claim code
+- Flashing/provisioning support:
+  - firmware image catalog in UI
+  - generated command workflow for flashing
+  - bootstrap claim API endpoint: `POST /api/provision/claim`
 - Integrations catalog:
   - original firmware defaults (Open-Meteo, wttr, NWS, Google/Reuters RSS, ZenQuotes)
   - alternate templates (Google Calendar, AccuWeather, OpenWeather, WeatherAPI, NewsAPI)
@@ -30,6 +36,36 @@ Standalone, containerized Python manager for ESP32-C6 e-ink dashboard devices.
 cp .env.example .env
 docker compose up --build -d
 docker compose ps
+```
+
+## Docker Scripts (Windows/Mac/Linux)
+
+Use these scripts from a Bash shell:
+
+- Windows: Git Bash or WSL (`bash ./scripts/<name>.sh`)
+- macOS/Linux: Terminal (`./scripts/<name>.sh`)
+
+```bash
+# Start (build + run)
+./scripts/up.sh
+
+# Check service + health
+./scripts/status.sh
+
+# Follow logs (default service: dashboard-manager)
+./scripts/logs.sh
+
+# Restart with rebuild
+./scripts/restart.sh
+
+# Stop (add --volumes to remove volumes)
+./scripts/down.sh
+```
+
+Optional remote context (example):
+
+```bash
+DOCKER_CONTEXT=personal ./scripts/up.sh
 ```
 
 Open:

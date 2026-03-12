@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Device Management</h2>
-<p class="muted">Add, remove, assign dashboards, and rotate device auth tokens.</p>
+<p class="muted">Add/remove devices, assign dashboards, provision raw hardware, and prepare firmware flashing workflows.</p>
 
 <div class="grid cols-2">
   <div>
-    <h3>Add Device</h3>
+    <h3>Add Device (Known Hardware)</h3>
     <form method="post" action="/devices/add">
       <label>Name</label>
       <input type="text" name="name" required>
@@ -17,15 +17,107 @@
       <button class="btn" type="submit">Add Device</button>
     </form>
   </div>
+
   <div>
-    <h3>Dashboards Available</h3>
-    <ul>
-      {% for d in dashboards %}
-      <li>{{ d.name }} <span class="tag">{{ d.id }}</span></li>
-      {% endfor %}
-    </ul>
+    <h3>Provision Raw Device</h3>
+    <p class="muted">Creates a pending device + claim code for first boot onboarding.</p>
+    <form method="post" action="/devices/provision-raw">
+      <label>Friendly Name (optional)</label>
+      <input type="text" name="name" placeholder="kitchen-panel-01">
+      <label>Assign Dashboard</label>
+      <select name="dashboard_id">
+        <option value="">(no assignment yet)</option>
+        {% for d in dashboards %}
+        <option value="{{ d.id }}">{{ d.name }}</option>
+        {% endfor %}
+      </select>
+      <label>Panel Profile</label>
+      <input type="text" name="panel_profile" value="solum_ed057tc6_baseline">
+      <label>PlatformIO Env</label>
+      <input type="text" name="platformio_env" value="seeed_xiao_esp32c6_solum_baseline_locked">
+      <button class="btn secondary" type="submit">Create Claim Code</button>
+    </form>
   </div>
 </div>
+
+<div class="grid cols-2" style="margin-top:16px;">
+  <div>
+    <h3>Firmware Catalog</h3>
+    <form method="post" action="/firmware/add">
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Slug</label>
+      <input type="text" name="slug" required>
+      <label>Board</label>
+      <input type="text" name="board" value="seeed_xiao_esp32c6">
+      <label>Panel Profile</label>
+      <input type="text" name="panel_profile" value="solum_ed057tc6_baseline">
+      <label>PlatformIO Env</label>
+      <input type="text" name="platformio_env" value="seeed_xiao_esp32c6_solum_baseline_locked">
+      <label>Version</label>
+      <input type="text" name="version" value="0.1.0">
+      <label>Binary URL (.bin)</label>
+      <input type="text" name="binary_url" placeholder="https://.../firmware.bin">
+      <label>Notes</label>
+      <textarea name="notes"></textarea>
+      <button class="btn secondary" type="submit">Add Firmware Image</button>
+    </form>
+  </div>
+
+  <div>
+    <h3>Web Flasher (Best Practical Path)</h3>
+    <p class="muted">Use a binary URL + claim code provisioning for raw-device onboarding.</p>
+    <label>Firmware Image</label>
+    <select id="flash-firmware-select">
+      {% for fw in firmware_images %}
+      <option value="{{ fw.binary_url }}" data-name="{{ fw.name }}" data-version="{{ fw.version }}">{{ fw.name }} ({{ fw.version }})</option>
+      {% endfor %}
+    </select>
+    <label>Generated esptool command</label>
+    <textarea id="flash-command" readonly></textarea>
+    <button class="btn" type="button" onclick="copyFlashCommand()">Copy Command</button>
+    <p class="muted" style="margin-top:8px;">Bootstrap claim endpoint: <code>POST /api/provision/claim</code></p>
+  </div>
+</div>
+
+<h3 style="margin-top:18px">Firmware Images</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Version</th>
+      <th>Board</th>
+      <th>Profile</th>
+      <th>Env</th>
+      <th>Binary URL</th>
+      <th>Web Manifest</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for fw in firmware_images %}
+    <tr>
+      <td>{{ fw.name }} {% if fw.is_default %}<span class="tag">default</span>{% endif %}</td>
+      <td>{{ fw.version }}</td>
+      <td>{{ fw.board }}</td>
+      <td>{{ fw.panel_profile }}</td>
+      <td>{{ fw.platformio_env }}</td>
+      <td><code>{{ fw.binary_url }}</code></td>
+      <td>{% if fw.binary_url %}<a href="/firmware/web-manifest/{{ fw.id }}" target="_blank">manifest</a>{% else %}<span class="muted">n/a</span>{% endif %}</td>
+      <td>
+        {% if not fw.is_default %}
+        <form method="post" action="/firmware/delete" onsubmit="return confirm('Delete this firmware image?');">
+          <input type="hidden" name="firmware_id" value="{{ fw.id }}">
+          <button class="btn warn" type="submit">Delete</button>
+        </form>
+        {% else %}
+        <span class="muted">locked</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 
 <h3 style="margin-top:18px">Device Inventory</h3>
 <table>
@@ -43,8 +135,15 @@
   <tbody>
     {% for device in devices %}
     {% set assignment = assignment_by_device.get(device.id) %}
+    {% set meta = device.metadata_json if device.metadata_json else {} %}
     <tr>
-      <td>{{ device.name }}<br><span class="muted">{{ device.id }}</span></td>
+      <td>
+        {{ device.name }}<br>
+        <span class="muted">{{ device.id }}</span>
+        {% if meta.get('claim_status') == 'pending' %}
+        <div class="tag" style="margin-top:6px;">Claim: {{ meta.get('claim_code') }}</div>
+        {% endif %}
+      </td>
       <td>{{ device.status }}</td>
       <td>{{ device.panel_profile }}</td>
       <td>{{ device.platformio_env }}</td>
@@ -81,4 +180,27 @@
     {% endfor %}
   </tbody>
 </table>
+
+<script>
+  function updateFlashCommand() {
+    const sel = document.getElementById('flash-firmware-select');
+    const url = sel ? sel.value : '';
+    const cmd = url
+      ? `python -m esptool --chip esp32c6 --port COM17 --baud 460800 write_flash 0x0 firmware.bin\n# Download from: ${url}`
+      : 'No binary URL configured for this firmware image yet.';
+    const box = document.getElementById('flash-command');
+    if (box) box.value = cmd;
+  }
+
+  function copyFlashCommand() {
+    const box = document.getElementById('flash-command');
+    if (!box) return;
+    box.select();
+    document.execCommand('copy');
+  }
+
+  const selectEl = document.getElementById('flash-firmware-select');
+  if (selectEl) selectEl.addEventListener('change', updateFlashCommand);
+  updateFlashCommand();
+</script>
 {% endblock %}

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h2>Designer</h2>
-<p class="muted">Base layout comes from the original ESP32-C6 firmware dashboard shape. Edit title/footer, add section templates, and resize sections.</p>
+<p class="muted">Design visually in Basic mode, then use Advanced mode for manual fine-tuning.</p>
 
 <div class="grid cols-2">
   <div>
@@ -9,7 +9,7 @@
     <form method="post" action="/designer/dashboard-create">
       <label>Name</label>
       <input type="text" name="name" placeholder="My Dashboard" required>
-      <label>Base Template</label>
+      <label>Base Preset</label>
       <select name="template_id" required>
         {% for t in templates %}
         <option value="{{ t.id }}">{{ t.name }}</option>
@@ -41,65 +41,191 @@
 {% if selected_dashboard %}
 <hr style="border:0;border-top:1px solid #d6dde5;margin:16px 0">
 
-<form method="post" action="/designer/add-section" style="margin-bottom:10px;display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+<form method="post" action="/designer/add-widget" style="margin-bottom:10px;display:flex;gap:8px;align-items:end;flex-wrap:wrap">
   <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
   <div style="min-width:260px">
-    <label>Add Section Template</label>
+    <label>Add Widget</label>
     <select name="section_template">
       {% for key, value in section_templates.items() %}
       <option value="{{ key }}">{{ value.title }} ({{ key }})</option>
       {% endfor %}
     </select>
   </div>
-  <button class="btn secondary" type="submit">Add Section</button>
-</form>
-
-<form method="post" action="/designer/refresh-now" style="margin-bottom:16px">
-  <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
-  <button class="btn secondary" type="submit">Refresh Data Now</button>
+  <div style="min-width:170px">
+    <label>Widget Size</label>
+    <select name="template_size">
+      {% for size in main_section_size_options %}
+      <option value="{{ size }}" {% if size == "medium" %}selected{% endif %}>{{ size|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button class="btn secondary" type="submit">Add Widget</button>
 </form>
 
 <form method="post" action="/designer/save" id="designer-form">
   <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
   <input type="hidden" id="widgets_json" name="widgets_json" value='{{ widgets_json|safe }}'>
+  <input type="hidden" id="header_widgets_json" name="header_widgets_json" value='{{ header_widgets_json|safe }}'>
+  <input type="hidden" id="footer_widgets_json" name="footer_widgets_json" value='{{ footer_widgets_json|safe }}'>
 
-  <div class="grid cols-2">
-    <div>
-      <h3>Layout</h3>
-      <label>Timezone</label>
-      <input type="text" name="timezone" value="{{ selected_dashboard.timezone }}">
-      <label>Grid Columns</label>
-      <input type="number" name="grid_columns" min="1" max="24" value="{{ layout_config.grid.columns }}">
-      <label>Grid Rows</label>
-      <input type="number" name="grid_rows" min="1" max="24" value="{{ layout_config.grid.rows }}">
-      <label><input type="checkbox" name="title_enabled" {% if layout_config.regions.title_bar.enabled %}checked{% endif %}> Title Bar Enabled</label>
-      <label>Title Bar Height (rows)</label>
-      <input type="number" name="title_height" min="1" max="4" value="{{ layout_config.regions.title_bar.height }}">
-      <label><input type="checkbox" name="footer_enabled" {% if layout_config.regions.footer.enabled %}checked{% endif %}> Footer Enabled</label>
-      <label>Footer Height (rows)</label>
-      <input type="number" name="footer_height" min="1" max="4" value="{{ layout_config.regions.footer.height }}">
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+    <label style="margin:0; display:flex; align-items:center; gap:6px;"><input id="advanced-toggle" type="checkbox"> Advanced Mode</label>
+    <label style="margin:0;">Preview Mode
+      <select id="preview-mode" style="width:auto; display:inline-block; margin-left:6px;">
+        <option value="layout">Layout Only</option>
+        <option value="real">Real Data</option>
+      </select>
+    </label>
+    <button class="btn secondary" type="button" onclick="loadRealData(true)">Refresh Real Data</button>
+    <button class="btn secondary" type="button" onclick="syncWidgets(); renderRegionDesigners(); renderPreview();">Sync Preview</button>
+    <label style="margin:0; display:flex; align-items:center; gap:6px;"><input id="avoid-overlap-toggle" type="checkbox" checked> Snap + Collision</label>
+    <button class="btn secondary" type="button" id="undo-btn" onclick="undoState()">Undo</button>
+    <button class="btn secondary" type="button" id="redo-btn" onclick="redoState()">Redo</button>
+    <button class="btn secondary" type="button" id="duplicate-btn" onclick="duplicateSelectedMainWidget()">Duplicate Selected</button>
+    <button class="btn secondary" type="button" onclick="autoArrangeMainWidgets()">Auto Arrange Main</button>
+  </div>
 
-      <h3 style="margin-top:14px">Live Browser Preview</h3>
-      <p class="muted">Preview matches current section geometry before push to e-ink device.</p>
-      <div style="max-width:700px; border:1px dashed #bcc8d5; border-radius:10px; padding:10px; background:#fafcff;">
-        <div id="preview-board" style="width:100%; aspect-ratio:600/448; border:1px solid #111; background:#fff;"></div>
+    <div style="border:1px solid #d6dde5; border-radius:12px; padding:10px; margin-bottom:12px; background:#f9fcff;">
+    <h3 style="margin-bottom:8px;">Canvas And Region Settings</h3>
+    <div class="grid" style="grid-template-columns: repeat(6, minmax(0, 1fr)); gap:10px;">
+      <div>
+        <label>Grid Columns</label>
+        <input type="number" name="grid_columns" min="1" max="24" value="{{ layout_config.grid.columns }}">
       </div>
-    </div>
-
-    <div>
-      <h3>Section Editor</h3>
-      <p class="muted">Edit position and size (`x`,`y`,`w`,`h`), refresh mode, and integration config. Remove sections as needed.</p>
-      <div id="widget-editor"></div>
+      <div>
+        <label>Grid Rows</label>
+        <input type="number" name="grid_rows" min="1" max="24" value="{{ layout_config.grid.rows }}">
+      </div>
+      <div>
+        <label style="margin-bottom:8px;">Header Enabled</label>
+        <label style="margin:0; display:flex; align-items:center; gap:6px;"><input type="checkbox" name="title_enabled" {% if layout_config.regions.title_bar.enabled %}checked{% endif %}> Show Header</label>
+      </div>
+      <div>
+        <label>Header Height (rows)</label>
+        <input type="number" name="title_height" min="1" max="4" value="{{ layout_config.regions.title_bar.height }}">
+      </div>
+      <div>
+        <label style="margin-bottom:8px;">Footer Enabled</label>
+        <label style="margin:0; display:flex; align-items:center; gap:6px;"><input type="checkbox" name="footer_enabled" {% if layout_config.regions.footer.enabled %}checked{% endif %}> Show Footer</label>
+      </div>
+      <div>
+        <label>Footer Height (rows)</label>
+        <input type="number" name="footer_height" min="1" max="4" value="{{ layout_config.regions.footer.height }}">
+      </div>
     </div>
   </div>
 
-  <button class="btn" type="submit" onclick="syncWidgets()">Save Designer</button>
+  <div class="grid cols-2">
+    <div>
+      <h3>Live Browser Preview</h3>
+      <p class="muted">Main widgets are drag-resizable in preview. Header and footer are always shown when enabled.</p>
+      <div style="max-width:760px; border:1px dashed #bcc8d5; border-radius:10px; padding:10px; background:#fafcff;">
+        <div id="preview-board" style="width:100%; aspect-ratio:600/448; border:1px solid #111; background:#fff; position:relative; overflow:hidden;"></div>
+      </div>
+      <p class="muted" id="preview-status" style="margin-top:8px;">Preview ready.</p>
+    </div>
+
+    <div>
+      <h3>Header And Footer Designer</h3>
+      <p class="muted">Subdivide header/footer with the same grid columns and drag-resize each info widget.</p>
+
+      <div style="border:1px solid #d6dde5; border-radius:12px; padding:10px; margin-bottom:10px;">
+        <h4 style="margin:0 0 8px 0;">Header</h4>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-bottom:8px;">
+          <div style="min-width:190px; flex:1;">
+            <label>Header Widget</label>
+            <select id="header-template-select">
+              {% for key, value in region_section_templates.items() %}
+              <option value="{{ key }}">{{ value.title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div style="min-width:130px;">
+            <label>Size</label>
+            <select id="header-template-size">
+              {% for size in region_widget_size_options %}
+              <option value="{{ size }}" {% if size == "large" %}selected{% endif %}>{{ size|capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn secondary" type="button" onclick="addRegionWidget('header')">Add To Header</button>
+          <button class="btn secondary" type="button" onclick="autoPackRegion('header')">Auto Pack</button>
+        </div>
+        <div id="header-board" style="height:76px; border:1px solid #123047; border-radius:8px; background:#fff; position:relative; overflow:hidden;"></div>
+        <div id="header-widget-list" style="margin-top:8px;"></div>
+      </div>
+
+      <div style="border:1px solid #d6dde5; border-radius:12px; padding:10px; margin-bottom:10px;">
+        <h4 style="margin:0 0 8px 0;">Footer</h4>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-bottom:8px;">
+          <div style="min-width:190px; flex:1;">
+            <label>Footer Widget</label>
+            <select id="footer-template-select">
+              {% for key, value in region_section_templates.items() %}
+              <option value="{{ key }}">{{ value.title }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div style="min-width:130px;">
+            <label>Size</label>
+            <select id="footer-template-size">
+              {% for size in region_widget_size_options %}
+              <option value="{{ size }}" {% if size == "half" %}selected{% endif %}>{{ size|capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="btn secondary" type="button" onclick="addRegionWidget('footer')">Add To Footer</button>
+          <button class="btn secondary" type="button" onclick="autoPackRegion('footer')">Auto Pack</button>
+        </div>
+        <div id="footer-board" style="height:76px; border:1px solid #123047; border-radius:8px; background:#fff; position:relative; overflow:hidden;"></div>
+        <div id="footer-widget-list" style="margin-top:8px;"></div>
+      </div>
+
+      <div id="advanced-panel" style="display:none; border-top:1px solid #d6dde5; padding-top:10px;">
+        <h3>Advanced Settings</h3>
+        <label>Timezone</label>
+        <input type="text" name="timezone" value="{{ selected_dashboard.timezone }}">
+
+        <h3 style="margin-top:14px;">Widget Editor</h3>
+        <p class="muted">Manual widget config (x,y,w,h, provider, refresh, config JSON).</p>
+        <div id="widget-editor"></div>
+      </div>
+    </div>
+  </div>
+<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+    <button class="btn" type="submit" onclick="syncWidgets()">Save Designer</button>
+  </div>
+</form>
+
+<form method="post" action="/designer/refresh-now" style="margin-top:10px;">
+  <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
+  <button class="btn secondary" type="submit">Refresh Manager Data Now</button>
 </form>
 
 <script>
+  const dashboardId = "{{ selected_dashboard.id }}";
   const weatherChoices = {{ weather_source_choices|tojson }};
   const newsChoices = {{ news_source_choices|tojson }};
+  const regionTemplates = {{ region_section_templates|tojson }};
+  const regionWidgetSizes = {{ region_widget_size_options|tojson }};
+
   const widgetsInput = document.getElementById('widgets_json');
+  const headerWidgetsInput = document.getElementById('header_widgets_json');
+  const footerWidgetsInput = document.getElementById('footer_widgets_json');
+  const previewBoard = document.getElementById('preview-board');
+  const previewStatus = document.getElementById('preview-status');
+  const previewModeSelect = document.getElementById('preview-mode');
+  const avoidOverlapToggle = document.getElementById('avoid-overlap-toggle');
+
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+  const duplicateBtn = document.getElementById('duplicate-btn');
+
+  const headerBoard = document.getElementById('header-board');
+  const footerBoard = document.getElementById('footer-board');
+  const headerWidgetList = document.getElementById('header-widget-list');
+  const footerWidgetList = document.getElementById('footer-widget-list');
+
   const layoutInputs = {
     cols: document.querySelector('input[name="grid_columns"]'),
     rows: document.querySelector('input[name="grid_rows"]'),
@@ -110,7 +236,246 @@
   };
 
   let widgets = [];
+  let headerWidgets = [];
+  let footerWidgets = [];
+  let realDataByWidgetId = {};
+  let dragState = null;
+  let regionDragState = null;
+  let selectedMainIndex = -1;
+
+  let history = [];
+  let historyIndex = -1;
+
   try { widgets = JSON.parse(widgetsInput.value || '[]'); } catch (_) { widgets = []; }
+  try { headerWidgets = JSON.parse(headerWidgetsInput.value || '[]'); } catch (_) { headerWidgets = []; }
+  try { footerWidgets = JSON.parse(footerWidgetsInput.value || '[]'); } catch (_) { footerWidgets = []; }
+
+  function safeNumber(value, fallback) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function gridCols() { return Math.max(1, safeNumber(layoutInputs.cols.value, 12)); }
+  function gridRows() { return Math.max(1, safeNumber(layoutInputs.rows.value, 8)); }
+  function titleEnabled() { return !!layoutInputs.titleEnabled.checked; }
+  function footerEnabled() { return !!layoutInputs.footerEnabled.checked; }
+  function titleRows() { return clamp(safeNumber(layoutInputs.titleHeight.value, 1), 1, 4); }
+  function footerRows() { return clamp(safeNumber(layoutInputs.footerHeight.value, 1), 1, 4); }
+  function avoidOverlapEnabled() { return !avoidOverlapToggle || avoidOverlapToggle.checked; }
+
+  function contentBounds() {
+    const rows = gridRows();
+    const top = titleEnabled() ? titleRows() : 0;
+    const bottom = rows - (footerEnabled() ? footerRows() : 0);
+    if (bottom <= top) return { top: 0, bottom: rows };
+    return { top, bottom };
+  }
+
+  function regionRows(region) {
+    return region === 'header' ? titleRows() : footerRows();
+  }
+
+  function regionEnabled(region) {
+    return region === 'header' ? titleEnabled() : footerEnabled();
+  }
+
+  function regionWidgets(region) {
+    return region === 'header' ? headerWidgets : footerWidgets;
+  }
+
+  function setRegionWidgets(region, list) {
+    if (region === 'header') headerWidgets = list;
+    else footerWidgets = list;
+  }
+
+  function stateSnapshot() {
+    return {
+      widgets: JSON.parse(JSON.stringify(widgets)),
+      headerWidgets: JSON.parse(JSON.stringify(headerWidgets)),
+      footerWidgets: JSON.parse(JSON.stringify(footerWidgets)),
+      selectedMainIndex,
+    };
+  }
+
+  function applySnapshot(snapshot) {
+    widgets = JSON.parse(JSON.stringify(snapshot.widgets || []));
+    headerWidgets = JSON.parse(JSON.stringify(snapshot.headerWidgets || []));
+    footerWidgets = JSON.parse(JSON.stringify(snapshot.footerWidgets || []));
+    selectedMainIndex = Number.isInteger(snapshot.selectedMainIndex) ? snapshot.selectedMainIndex : -1;
+    if (selectedMainIndex >= widgets.length) selectedMainIndex = widgets.length - 1;
+  }
+
+  function pushHistory() {
+    const serial = JSON.stringify(stateSnapshot());
+    if (historyIndex >= 0 && history[historyIndex] === serial) return;
+    history = history.slice(0, historyIndex + 1);
+    history.push(serial);
+    historyIndex = history.length - 1;
+    updateActionButtons();
+  }
+
+  function restoreHistory(index) {
+    if (index < 0 || index >= history.length) return;
+    historyIndex = index;
+    applySnapshot(JSON.parse(history[historyIndex]));
+    syncWidgets();
+    renderWidgetsEditor();
+    renderRegionDesigners();
+    renderPreview();
+    updateActionButtons();
+  }
+
+  function undoState() {
+    restoreHistory(historyIndex - 1);
+  }
+
+  function redoState() {
+    restoreHistory(historyIndex + 1);
+  }
+
+  function updateActionButtons() {
+    if (undoBtn) undoBtn.disabled = historyIndex <= 0;
+    if (redoBtn) redoBtn.disabled = historyIndex < 0 || historyIndex >= history.length - 1;
+    if (duplicateBtn) duplicateBtn.disabled = selectedMainIndex < 0 || selectedMainIndex >= widgets.length;
+  }
+
+  function makeWidgetId(prefix) {
+    return `${prefix}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function getCellSizeFor(board, cols, rows) {
+    const rect = board.getBoundingClientRect();
+    return {
+      cellW: rect.width / Math.max(1, cols),
+      cellH: rect.height / Math.max(1, rows),
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
+  function getCellSize() {
+    return getCellSizeFor(previewBoard, gridCols(), gridRows());
+  }
+
+  function normalizeMainLayout(layout) {
+    const cols = gridCols();
+    const bounds = contentBounds();
+    const x = clamp(safeNumber(layout.x, 0), 0, cols - 1);
+    const y = clamp(safeNumber(layout.y, bounds.top), bounds.top, bounds.bottom - 1);
+    const w = clamp(safeNumber(layout.w, 1), 1, cols - x);
+    const h = clamp(safeNumber(layout.h, 1), 1, bounds.bottom - y);
+    return { x, y, w, h };
+  }
+
+  function regionSpanForSize(size) {
+    const cols = gridCols();
+    const key = String(size || 'half').toLowerCase();
+    if (key === 'quarter') return clamp(Math.round(cols / 4), 1, cols);
+    if (key === 'small') return clamp(Math.round(cols / 6), 1, cols);
+    if (key === 'half') return clamp(Math.round(cols / 2), 1, cols);
+    if (key === 'medium') return clamp(Math.round(cols / 3), 1, cols);
+    if (key === 'large') return clamp(Math.round((2 * cols) / 3), 1, cols);
+    if (key === 'full') return cols;
+    return clamp(Math.round(cols / 2), 1, cols);
+  }
+
+  function normalizeRegionLayout(layout, rows, size) {
+    const cols = gridCols();
+    const widthDefault = regionSpanForSize(size);
+    const w = clamp(safeNumber(layout?.w, widthDefault), 1, cols);
+    const x = clamp(safeNumber(layout?.x, 0), 0, cols - w);
+    const h = clamp(safeNumber(layout?.h, 1), 1, rows);
+    const y = clamp(safeNumber(layout?.y, 0), 0, rows - h);
+    return { x, y, w, h };
+  }
+
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function collidesMain(layout, excludeIndex) {
+    for (let i = 0; i < widgets.length; i += 1) {
+      if (i === excludeIndex) continue;
+      const other = normalizeMainLayout(widgets[i]?.layout || { x: 0, y: 0, w: 1, h: 1 });
+      if (rectsOverlap(layout, other)) return true;
+    }
+    return false;
+  }
+
+  function findNearestFreeMain(layout, excludeIndex) {
+    const candidate = normalizeMainLayout(layout);
+    if (!avoidOverlapEnabled() || !collidesMain(candidate, excludeIndex)) return candidate;
+
+    const cols = gridCols();
+    const bounds = contentBounds();
+    let best = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (let y = bounds.top; y <= bounds.bottom - candidate.h; y += 1) {
+      for (let x = 0; x <= cols - candidate.w; x += 1) {
+        const probe = { x, y, w: candidate.w, h: candidate.h };
+        if (collidesMain(probe, excludeIndex)) continue;
+        const score = Math.abs(x - candidate.x) + Math.abs(y - candidate.y);
+        if (score < bestScore) {
+          best = probe;
+          bestScore = score;
+        }
+      }
+    }
+
+    return best || candidate;
+  }
+
+  function collidesRegion(region, layout, excludeIndex) {
+    const list = regionWidgets(region);
+    const rows = regionRows(region);
+    for (let i = 0; i < list.length; i += 1) {
+      if (i === excludeIndex) continue;
+      const other = normalizeRegionLayout(list[i]?.layout || { x: 0, y: 0, w: 1, h: 1 }, rows, list[i]?.size || 'medium');
+      if (rectsOverlap(layout, other)) return true;
+    }
+    return false;
+  }
+
+  function findNearestFreeRegion(region, layout, excludeIndex) {
+    const rows = regionRows(region);
+    const candidate = normalizeRegionLayout(layout, rows, 'medium');
+    if (!avoidOverlapEnabled() || !collidesRegion(region, candidate, excludeIndex)) return candidate;
+
+    const cols = gridCols();
+    let best = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (let y = 0; y <= rows - candidate.h; y += 1) {
+      for (let x = 0; x <= cols - candidate.w; x += 1) {
+        const probe = { x, y, w: candidate.w, h: candidate.h };
+        if (collidesRegion(region, probe, excludeIndex)) continue;
+        const score = Math.abs(x - candidate.x) + Math.abs(y - candidate.y);
+        if (score < bestScore) {
+          best = probe;
+          bestScore = score;
+        }
+      }
+    }
+
+    return best || candidate;
+  }
+  function drawGridBackgroundFor(board, cols, rows, bgColor) {
+    board.style.backgroundImage = `
+      linear-gradient(to right, rgba(0,0,0,0.13) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0,0,0,0.13) 1px, transparent 1px)
+    `;
+    board.style.backgroundSize = `${100 / cols}% ${100 / rows}%`;
+    board.style.backgroundColor = bgColor;
+  }
+
+  function drawGridBackground() {
+    drawGridBackgroundFor(previewBoard, gridCols(), gridRows(), '#fefefe');
+  }
 
   function sourceOptions(type, selected) {
     const list = type === 'weather' ? weatherChoices : (type === 'news' ? newsChoices : []);
@@ -118,82 +483,866 @@
     return list.map(s => `<option value="${s}" ${s===selected?'selected':''}>${s}</option>`).join('');
   }
 
-  function widgetBadge(widget) {
+  const widgetConfigSchemas = {
+    weather: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    news: [
+      { name: 'source', label: 'Source', type: 'select', optionsKey: 'news', default: 'google' },
+      { name: 'limit', label: 'Limit', type: 'number', default: 5, min: 1, max: 20 }
+    ],
+    quote: [
+      { name: 'source', label: 'Source', type: 'text', default: 'zenquotes' },
+      { name: 'text', label: 'Fallback Text', type: 'text', default: '' },
+      { name: 'author', label: 'Fallback Author', type: 'text', default: '' }
+    ],
+    calendar: [
+      { name: 'calendar_id', label: 'Calendar ID', type: 'text', default: 'primary' },
+      { name: 'credentials_ref', label: 'Credentials Ref', type: 'text', default: '' }
+    ],
+    kpi_strip: [{ name: 'items', label: 'KPI Items (one label:value per line)', type: 'textarea', special: 'kpi_items' }],
+    status_panel: [
+      { name: 'title', label: 'Panel Title', type: 'text', default: 'System' },
+      { name: 'status', label: 'Status', type: 'text', default: 'OK' },
+      { name: 'details', label: 'Details (one per line)', type: 'textarea', special: 'lines_array', target: 'details' }
+    ],
+    todo_list: [{ name: 'items', label: 'Tasks (one per line)', type: 'textarea', special: 'lines_array', target: 'items' }],
+    notes_panel: [{ name: 'notes', label: 'Notes (one per line)', type: 'textarea', special: 'lines_array', target: 'notes' }],
+    clock_panel: [{ name: 'timezone', label: 'Timezone', type: 'text', default: 'America/Chicago' }],
+    alerts_feed: [
+      { name: 'source', label: 'Source', type: 'select', options: ['nws', ...newsChoices], default: 'nws' },
+      { name: 'limit', label: 'Limit', type: 'number', default: 5, min: 1, max: 20 }
+    ],
+    system_health: [
+      { name: 'cpu', label: 'CPU %', type: 'number', default: 18, min: 0, max: 100 },
+      { name: 'mem', label: 'Memory %', type: 'number', default: 42, min: 0, max: 100 },
+      { name: 'disk', label: 'Disk %', type: 'number', default: 56, min: 0, max: 100 }
+    ],
+    market_ticker: [{ name: 'symbols', label: 'Symbols (comma-separated)', type: 'text', special: 'symbols_csv' }],
+
+    header_summary: [
+      { name: 'show_ip', label: 'Show IP', type: 'checkbox', default: true },
+      { name: 'show_temp', label: 'Show Temp', type: 'checkbox', default: true }
+    ],
+    forecast_summary: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    today_forecast: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    today_date: [{ name: 'format', label: 'Date Format', type: 'text', default: 'EEE, MMM d' }],
+    current_time: [{ name: 'format', label: 'Time Format', type: 'text', default: 'h:mm a' }],
+    last_updated: [{ name: 'format', label: 'Time Format', type: 'text', default: 'h:mm a' }],
+    current_temp: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    location: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    humidity: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    wind: [{ name: 'zipcode', label: 'Zipcode', type: 'text', default: '63122' }],
+    ip_address: [{ name: 'ip_address', label: 'IP Override', type: 'text', default: '' }],
+    status_badge: [
+      { name: 'label', label: 'Label', type: 'text', default: 'Online' },
+      { name: 'severity', label: 'Severity', type: 'select', options: ['ok', 'info', 'warn', 'error'], default: 'ok' }
+    ],
+    wifi_signal: [{ name: 'rssi', label: 'RSSI (dBm)', type: 'number', default: -60, min: -120, max: 0 }],
+    battery: [{ name: 'percent', label: 'Battery %', type: 'number', default: 82, min: 0, max: 100 }],
+    uptime: [{ name: 'uptime', label: 'Uptime Text', type: 'text', default: '3d 11h' }],
+    network_latency: [{ name: 'ms', label: 'Latency (ms)', type: 'number', default: 31, min: 0, max: 9999 }],
+    stacked_text: [
+      { name: 'line1', label: 'Line 1', type: 'text', default: 'Primary line' },
+      { name: 'line2', label: 'Line 2', type: 'text', default: 'Secondary line' },
+      { name: 'line3', label: 'Line 3', type: 'text', default: 'Tertiary line' }
+    ],
+  };
+
+  function widgetSchemaKey(widget) {
+    return String(widget?.template || widget?.type || '').toLowerCase();
+  }
+
+  function schemaForWidget(widget) {
+    return widgetConfigSchemas[widgetSchemaKey(widget)] || [];
+  }
+
+  function schemaOptions(field) {
+    if (field.optionsKey === 'news') return newsChoices;
+    if (field.optionsKey === 'weather') return weatherChoices;
+    if (Array.isArray(field.options)) return field.options;
+    return [];
+  }
+
+  function readSchemaValue(config, field) {
+    if (field.special === 'lines_array') {
+      const key = field.target || field.name;
+      const arr = Array.isArray(config?.[key]) ? config[key] : [];
+      return arr.join('\n');
+    }
+    if (field.special === 'kpi_items') {
+      const items = Array.isArray(config?.items) ? config.items : [];
+      return items.map((item) => `${item?.label || ''}:${item?.value || ''}`).join('\n');
+    }
+    if (field.special === 'symbols_csv') {
+      const symbols = Array.isArray(config?.symbols) ? config.symbols : [];
+      return symbols.join(', ');
+    }
+
+    const raw = config?.[field.name];
+    if (field.type === 'checkbox') {
+      if (raw === undefined || raw === null) return !!field.default;
+      return !!raw;
+    }
+    if (raw === undefined || raw === null || raw === '') return field.default ?? '';
+    return raw;
+  }
+
+  function writeSchemaValue(config, field, rawValue) {
+    if (field.special === 'lines_array') {
+      const key = field.target || field.name;
+      const lines = String(rawValue || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      config[key] = lines;
+      return;
+    }
+
+    if (field.special === 'kpi_items') {
+      const lines = String(rawValue || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      config.items = lines.map((line) => {
+        const parts = line.split(':');
+        if (parts.length < 2) return { label: line, value: '' };
+        return { label: parts.shift().trim(), value: parts.join(':').trim() };
+      });
+      return;
+    }
+
+    if (field.special === 'symbols_csv') {
+      const list = String(rawValue || '')
+        .split(/[\n,]/)
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+      config.symbols = list;
+      return;
+    }
+
+    if (field.type === 'checkbox') {
+      config[field.name] = !!rawValue;
+      return;
+    }
+
+    if (field.type === 'number') {
+      const n = Number(rawValue);
+      if (Number.isFinite(n)) config[field.name] = n;
+      return;
+    }
+
+    config[field.name] = String(rawValue ?? '');
+  }
+
+  function schemaControlMarkup(field, value, onchangeExpr) {
+    const label = escapeHtml(field.label || field.name || 'Field');
+    if (field.type === 'checkbox') {
+      return `<label style="margin:0; font-size:11px; display:flex; align-items:center; gap:6px;"><input type="checkbox" ${value ? 'checked' : ''} onchange="${onchangeExpr}"> ${label}</label>`;
+    }
+
+    if (field.type === 'select') {
+      const options = schemaOptions(field)
+        .map((opt) => {
+          const selected = String(value) === String(opt) ? 'selected' : '';
+          return `<option value="${escapeHtml(opt)}" ${selected}>${escapeHtml(opt)}</option>`;
+        })
+        .join('');
+      return `<label style="margin:0; font-size:11px;">${label}<select style="margin-top:4px;" onchange="${onchangeExpr}">${options}</select></label>`;
+    }
+
+    if (field.type === 'textarea') {
+      return `<label style="margin:0; font-size:11px;">${label}<textarea rows="2" style="margin-top:4px; width:100%;" onchange="${onchangeExpr}">${escapeHtml(String(value ?? ''))}</textarea></label>`;
+    }
+
+    const type = field.type === 'number' ? 'number' : 'text';
+    const minAttr = field.min !== undefined ? `min="${field.min}"` : '';
+    const maxAttr = field.max !== undefined ? `max="${field.max}"` : '';
+    return `<label style="margin:0; font-size:11px;">${label}<input type="${type}" style="margin-top:4px;" value="${escapeHtml(String(value ?? ''))}" ${minAttr} ${maxAttr} onchange="${onchangeExpr}"></label>`;
+  }
+
+  function mainWidgetConfigFieldsMarkup(widget, index) {
+    const schema = schemaForWidget(widget);
+    const config = widget?.integration?.config || {};
+    if (!schema.length) {
+      return '<div class="muted" style="font-size:11px;">No form fields for this widget type yet.</div>';
+    }
+
+    return schema.map((field) => {
+      const value = readSchemaValue(config, field);
+      const exprValue = field.type === 'checkbox' ? 'this.checked' : 'this.value';
+      const onchangeExpr = `updateMainWidgetConfigField(${index}, '${field.name}', ${exprValue}, '${field.type || 'text'}', '${field.special || ''}', '${field.target || ''}')`;
+      return schemaControlMarkup(field, value, onchangeExpr);
+    }).join('');
+  }
+
+  function regionWidgetConfigFieldsMarkup(widget, region, index) {
+    const schema = schemaForWidget(widget);
+    const config = widget?.integration?.config || {};
+    if (!schema.length) {
+      return '<div class="muted" style="font-size:11px;">No form fields for this widget type yet.</div>';
+    }
+
+    return schema.map((field) => {
+      const value = readSchemaValue(config, field);
+      const exprValue = field.type === 'checkbox' ? 'this.checked' : 'this.value';
+      const onchangeExpr = `updateRegionWidgetConfigField('${region}', ${index}, '${field.name}', ${exprValue}, '${field.type || 'text'}', '${field.special || ''}', '${field.target || ''}')`;
+      return schemaControlMarkup(field, value, onchangeExpr);
+    }).join('');
+  }
+
+  function summarizeData(widget, payload) {
+    if (!payload || typeof payload !== 'object' || Object.keys(payload).length === 0) return 'no cached data';
+    if (widget.type === 'weather') {
+      const temp = payload.current?.temp_f;
+      const loc = payload.location || payload.zipcode || 'location n/a';
+      return temp !== undefined ? `${loc}, ${temp}F` : `${loc}`;
+    }
+    if (widget.type === 'news') {
+      const first = payload.headlines && payload.headlines.length ? payload.headlines[0].title : 'no headline';
+      return first;
+    }
+    if (widget.type === 'quote') return payload.quote || 'quote unavailable';
+    if (widget.type === 'calendar') {
+      const first = payload.events && payload.events.length ? payload.events[0].title : 'no events';
+      return first;
+    }
+    return payload.status ? `status: ${payload.status}` : 'data ready';
+  }
+
+  function widgetSubtitle(widget) {
     const integ = widget.integration || {};
     const cfg = integ.config || {};
+    if (previewModeSelect.value === 'real') return summarizeData(widget, realDataByWidgetId[widget.id]);
     if (widget.type === 'news') return `source: ${cfg.source || 'google'}`;
     if (widget.type === 'weather') return `provider: ${integ.provider || 'openmeteo'}`;
     if (widget.type === 'quote') return `source: ${cfg.source || 'zenquotes'}`;
     if (widget.type === 'calendar') return `provider: ${integ.provider || 'google_calendar'}`;
-    return integ.provider ? `provider: ${integ.provider}` : 'custom section';
+    return integ.provider ? `provider: ${integ.provider}` : 'custom widget';
   }
 
-  function renderPreview() {
-    const board = document.getElementById('preview-board');
-    const cols = Math.max(1, Number(layoutInputs.cols.value || 12));
-    const rows = Math.max(1, Number(layoutInputs.rows.value || 8));
-    const titleEnabled = !!layoutInputs.titleEnabled.checked;
-    const footerEnabled = !!layoutInputs.footerEnabled.checked;
-    const titleHeight = Math.max(1, Number(layoutInputs.titleHeight.value || 1));
-    const footerHeight = Math.max(1, Number(layoutInputs.footerHeight.value || 1));
-
-    board.innerHTML = '';
-    board.style.display = 'grid';
-    board.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-    board.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
-    board.style.gap = '1px';
-    board.style.background = '#d9e0e8';
-
-    const addRegion = (label, rowStart, rowSpan) => {
-      const el = document.createElement('div');
-      el.style.gridColumn = `1 / span ${cols}`;
-      el.style.gridRow = `${rowStart} / span ${rowSpan}`;
-      el.style.background = '#f0f3f6';
-      el.style.border = '1px solid #9cadbc';
-      el.style.display = 'flex';
-      el.style.alignItems = 'center';
-      el.style.justifyContent = 'space-between';
-      el.style.padding = '2px 8px';
-      el.style.fontSize = '11px';
-      el.innerHTML = `<strong>${label}</strong><span>${rowSpan} row(s)</span>`;
-      board.appendChild(el);
+  function layoutToStyle(layout) {
+    const cols = gridCols();
+    const rows = gridRows();
+    return {
+      left: `${(layout.x / cols) * 100}%`,
+      top: `${(layout.y / rows) * 100}%`,
+      width: `${(layout.w / cols) * 100}%`,
+      height: `${(layout.h / rows) * 100}%`
     };
+  }
 
-    if (titleEnabled) addRegion('Title Bar', 1, Math.min(titleHeight, rows));
-    if (footerEnabled) {
-      const start = Math.max(1, rows - footerHeight + 1);
-      addRegion('Footer', start, Math.min(footerHeight, rows));
+  function getPrimaryWeatherData() {
+    for (const widget of widgets) {
+      if (widget.type !== 'weather') continue;
+      const payload = realDataByWidgetId[widget.id];
+      if (payload && typeof payload === 'object' && Object.keys(payload).length) return payload;
+    }
+    return {};
+  }
+
+  function formatTemp(payload) {
+    const f = payload?.current?.temp_f;
+    const c = payload?.current?.temp_c;
+    if (f !== undefined && f !== null) return `${Math.round(Number(f))}F`;
+    if (c !== undefined && c !== null) return `${Math.round(Number(c))}C`;
+    return '--';
+  }
+
+  function resolveIpAddress(widget) {
+    const cfgIp = widget?.integration?.config?.ip_address;
+    if (cfgIp) return String(cfgIp);
+
+    for (const payload of Object.values(realDataByWidgetId || {})) {
+      if (!payload || typeof payload !== 'object') continue;
+      if (payload.ip_address) return String(payload.ip_address);
+      if (payload.ip) return String(payload.ip);
+      if (payload.device?.ip_address) return String(payload.device.ip_address);
     }
 
-    widgets.forEach((w, i) => {
-      const layout = w.layout || {};
-      const x = Math.max(0, Number(layout.x ?? 0));
-      const y = Math.max(0, Number(layout.y ?? 0));
-      const spanW = Math.max(1, Number(layout.w ?? 1));
-      const spanH = Math.max(1, Number(layout.h ?? 1));
+    return previewModeSelect.value === 'real' ? 'ip n/a' : '192.168.1.100';
+  }
 
-      const el = document.createElement('div');
-      el.style.gridColumn = `${Math.min(cols, x + 1)} / span ${Math.min(cols, spanW)}`;
-      el.style.gridRow = `${Math.min(rows, y + 1)} / span ${Math.min(rows, spanH)}`;
-      el.style.background = '#fff';
-      el.style.border = '1px solid #1a252f';
-      el.style.padding = '4px 6px';
-      el.style.fontSize = '11px';
-      el.style.overflow = 'hidden';
-      el.innerHTML = `<strong>${w.title || w.type || ('Section ' + (i + 1))}</strong><br><span>${widgetBadge(w)}</span>`;
-      board.appendChild(el);
+  function extractHiLow(weather) {
+    const hi = weather?.forecast?.today?.high_f ?? weather?.forecast?.today?.high;
+    const lo = weather?.forecast?.today?.low_f ?? weather?.forecast?.today?.low;
+    const hiTxt = hi !== undefined && hi !== null ? Math.round(Number(hi)) : '--';
+    const loTxt = lo !== undefined && lo !== null ? Math.round(Number(lo)) : '--';
+    return `H ${hiTxt}F | L ${loTxt}F`;
+  }
+
+  function isStackedWidget(widget) {
+    const key = String(widget?.template || widget?.type || '').toLowerCase();
+    return key === 'header_summary' || key === 'forecast_summary' || key === 'today_forecast' || key === 'stacked_text';
+  }
+
+  function regionPreviewLines(widget, compact = false) {
+    const key = String(widget.template || widget.type || '').toLowerCase();
+    const size = String(widget.size || 'half').toLowerCase();
+    const weather = getPrimaryWeatherData();
+    const now = new Date();
+
+    if (key === 'header_summary') {
+      const dateLine = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      const location = weather.location || weather.city || weather.zipcode || 'Saint Louis, MO';
+      const temp = formatTemp(weather);
+      const ip = resolveIpAddress(widget);
+      return [dateLine, `${location}`, `${temp}  |  ${ip}`];
+    }
+
+    if (key === 'forecast_summary') {
+      const summary = weather?.forecast?.today?.summary || weather?.forecast?.summary || weather?.summary || 'Partly cloudy';
+      return ["Today's Forecast", summary, extractHiLow(weather)];
+    }
+
+    if (key === 'ip_address') {
+      return [resolveIpAddress(widget)];
+    }
+
+    if (key === 'last_updated') {
+      return [`Updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`];
+    }
+
+    if (key === 'status_badge') {
+      const label = widget?.integration?.config?.label || 'Online';
+      return [String(label)];
+    }
+
+    if (key === 'humidity') {
+      const h = weather?.current?.humidity ?? weather?.humidity;
+      return [`Humidity ${h !== undefined && h !== null ? `${Math.round(Number(h))}%` : '--'}`];
+    }
+
+    if (key === 'wind') {
+      const w = weather?.current?.wind_mph ?? weather?.wind_mph;
+      return [`Wind ${w !== undefined && w !== null ? `${Math.round(Number(w))} mph` : '--'}`];
+    }
+
+    if (key === 'wifi_signal') {
+      const rssi = widget?.integration?.config?.rssi ?? -60;
+      return [`Wi-Fi ${rssi} dBm`];
+    }
+
+    if (key === 'battery') {
+      const pct = widget?.integration?.config?.percent ?? 82;
+      return [`Battery ${pct}%`];
+    }
+
+    if (key === 'uptime') {
+      const up = widget?.integration?.config?.uptime || '3d 11h';
+      return [`Uptime ${up}`];
+    }
+
+    if (key === 'network_latency') {
+      const ms = widget?.integration?.config?.ms ?? 31;
+      return [`Latency ${ms} ms`];
+    }
+
+    if (key === 'stacked_text') {
+      const cfg = widget?.integration?.config || {};
+      return [cfg.line1 || 'Primary line', cfg.line2 || 'Secondary line', cfg.line3 || 'Tertiary line'];
+    }
+
+    if (key === 'today_date') {
+      if (size === 'quarter' || size === 'small') return [now.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })];
+      if (size === 'large' || size === 'full') return [now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })];
+      return [now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })];
+    }
+
+    if (key === 'current_time') {
+      if (size === 'large' || size === 'full') return [now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })];
+      return [now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })];
+    }
+
+    if (key === 'current_temp') {
+      const temp = formatTemp(weather);
+      if (size === 'quarter' || size === 'small') return [temp];
+      return [size === 'large' ? `Current Temp ${temp}` : `Temp ${temp}`];
+    }
+
+    if (key === 'location') {
+      const loc = weather.location || weather.zipcode || 'Location';
+      return [size === 'large' ? `Location: ${loc}` : String(loc)];
+    }
+
+    if (key === 'today_forecast') {
+      const forecast = weather?.forecast?.today?.summary || weather?.forecast?.summary || weather?.summary || 'Forecast unavailable';
+      if (size === 'small' && compact) return ['Forecast'];
+      if (size === 'large' || size === 'full') return [`Today's Forecast: ${forecast}`];
+      return [forecast];
+    }
+
+    return [widget.title || 'Widget'];
+  }
+
+  function regionPreviewMarkup(widget, compact = false) {
+    const lines = regionPreviewLines(widget, compact);
+    return lines
+      .slice(0, 3)
+      .map((line, idx) => {
+        const weight = idx === 0 ? 700 : 400;
+        const style = idx === 1 && isStackedWidget(widget) ? 'font-style:italic;' : '';
+        return `<span style="display:block; line-height:1.05; font-size:${idx === 0 ? '12px' : '11px'}; font-weight:${weight}; ${style}">${line}</span>`;
+      })
+      .join('');
+  }
+
+  function drawRegionBar(label, topPct, heightPct, color, border) {
+    const region = document.createElement('div');
+    region.style.position = 'absolute';
+    region.style.left = '0';
+    region.style.right = '0';
+    region.style.top = `${topPct}%`;
+    region.style.height = `${heightPct}%`;
+    region.style.background = color;
+    region.style.border = `1px dashed ${border}`;
+    region.style.fontSize = '11px';
+    region.style.padding = '2px 6px';
+    region.style.color = border;
+    region.style.zIndex = '1';
+    region.textContent = label;
+    previewBoard.appendChild(region);
+  }
+
+  function renderRegionOnPreview(region, rowStart, rowCount, bg, border) {
+    const cols = gridCols();
+    const rows = gridRows();
+    regionWidgets(region).forEach((widget, idx) => {
+      widget.layout = findNearestFreeRegion(region, normalizeRegionLayout(widget.layout || {}, rowCount, widget.size || 'medium'), idx);
+      const l = widget.layout;
+      const box = document.createElement('div');
+      box.style.position = 'absolute';
+      box.style.left = `${(l.x / cols) * 100}%`;
+      box.style.top = `${((rowStart + l.y) / rows) * 100}%`;
+      box.style.width = `${(l.w / cols) * 100}%`;
+      box.style.height = `${(l.h / rows) * 100}%`;
+      box.style.border = `1px solid ${border}`;
+      box.style.background = bg;
+      box.style.padding = '3px 5px';
+      box.style.fontSize = '11px';
+      box.style.zIndex = '5';
+      box.style.overflow = 'hidden';
+      const previewMarkup = regionPreviewMarkup(widget, false);
+      box.innerHTML = isStackedWidget(widget) ? previewMarkup : `<strong>${widget.title || widget.type}</strong><br>${previewMarkup}`;
+      previewBoard.appendChild(box);
     });
   }
 
-  function renderWidgets() {
+  function renderPreview() {
+    previewBoard.innerHTML = '';
+    drawGridBackground();
+
+    const rows = gridRows();
+    const titleOn = titleEnabled();
+    const footerOn = footerEnabled();
+    const titleH = titleRows();
+    const footerH = footerRows();
+
+    if (titleOn) {
+      drawRegionBar('Header', 0, (titleH / rows) * 100, 'rgba(18, 48, 71, 0.14)', '#16394f');
+      renderRegionOnPreview('header', 0, titleH, 'rgba(233, 245, 255, 0.92)', '#1d4964');
+    }
+    if (footerOn) {
+      const top = ((rows - footerH) / rows) * 100;
+      drawRegionBar('Footer', top, (footerH / rows) * 100, 'rgba(31, 100, 78, 0.14)', '#1d5a49');
+      renderRegionOnPreview('footer', rows - footerH, footerH, 'rgba(234, 250, 245, 0.94)', '#1d5a49');
+    }
+
+    widgets.forEach((widget, idx) => {
+      const normalized = normalizeMainLayout(widget.layout || { x: 0, y: 0, w: 1, h: 1 });
+      widget.layout = findNearestFreeMain(normalized, idx);
+      const style = layoutToStyle(widget.layout);
+
+      const box = document.createElement('div');
+      box.className = 'preview-widget';
+      box.dataset.index = String(idx);
+      box.style.position = 'absolute';
+      box.style.left = style.left;
+      box.style.top = style.top;
+      box.style.width = style.width;
+      box.style.height = style.height;
+      box.style.background = '#ffffff';
+      box.style.border = idx === selectedMainIndex ? '2px solid #1d8f8a' : '1px solid #1a252f';
+      box.style.boxShadow = '0 2px 5px rgba(0,0,0,0.08)';
+      box.style.padding = '4px 6px';
+      box.style.fontSize = '11px';
+      box.style.cursor = 'move';
+      box.style.userSelect = 'none';
+      box.style.zIndex = idx === selectedMainIndex ? '6' : '3';
+      box.innerHTML = `<strong>${widget.title || widget.type || ('Widget ' + (idx + 1))}</strong><br><span>${widgetSubtitle(widget)}</span>`;
+
+      const resize = document.createElement('div');
+      resize.className = 'resize-handle';
+      resize.dataset.index = String(idx);
+      resize.style.position = 'absolute';
+      resize.style.right = '0';
+      resize.style.bottom = '0';
+      resize.style.width = '12px';
+      resize.style.height = '12px';
+      resize.style.background = '#123047';
+      resize.style.cursor = 'nwse-resize';
+      box.appendChild(resize);
+
+      box.addEventListener('mousedown', (ev) => {
+        selectedMainIndex = idx;
+        updateActionButtons();
+        startDrag(ev, idx, 'move');
+      });
+      resize.addEventListener('mousedown', (ev) => {
+        ev.stopPropagation();
+        selectedMainIndex = idx;
+        updateActionButtons();
+        startDrag(ev, idx, 'resize');
+      });
+
+      previewBoard.appendChild(box);
+    });
+
+    previewStatus.textContent = previewModeSelect.value === 'real'
+      ? 'Real-data preview mode (cached manager data).'
+      : 'Layout-only preview mode.';
+  }
+
+  function nextRegionPlacement(region, width) {
+    const cols = gridCols();
+    let cursor = 0;
+    regionWidgets(region).forEach((widget) => {
+      const l = widget.layout || {};
+      const end = safeNumber(l.x, 0) + safeNumber(l.w, 1);
+      if (end > cursor) cursor = end;
+    });
+    return { x: clamp(cursor, 0, Math.max(0, cols - width)), y: 0 };
+  }
+
+  function makeRegionWidget(region, templateKey, size) {
+    const template = regionTemplates[templateKey] || {};
+    const normalizedSize = regionWidgetSizes.includes(size) ? size : (template.default_size || 'half');
+    const rows = regionRows(region);
+    const w = regionSpanForSize(normalizedSize);
+    const place = nextRegionPlacement(region, w);
+    return {
+      id: makeWidgetId(region),
+      template: templateKey,
+      type: template.type || templateKey,
+      title: template.title || 'Widget',
+      size: normalizedSize,
+      layout: { x: place.x, y: place.y, w, h: Math.max(1, Math.min(rows, 1)) },
+      integration: template.integration || { provider: '', config: {} },
+    };
+  }
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function updateRegionWidgetField(region, index, field, value) {
+    const list = regionWidgets(region);
+    const widget = list[index];
+    if (!widget) return;
+
+    if (field === 'title') {
+      widget.title = String(value || '').trim() || 'Widget';
+    }
+    if (field === 'size') {
+      const selected = regionWidgetSizes.includes(value) ? value : 'half';
+      widget.size = selected;
+      const rows = regionRows(region);
+      widget.layout = normalizeRegionLayout(widget.layout || {}, rows, selected);
+      widget.layout.w = regionSpanForSize(selected);
+      widget.layout = findNearestFreeRegion(region, widget.layout, index);
+    }
+
+    setRegionWidgets(region, list);
+    commitDesigner(true);
+  }
+
+  function updateRegionWidgetConfigField(region, index, fieldName, rawValue, fieldType, special, target) {
+    const list = regionWidgets(region);
+    const widget = list[index];
+    if (!widget) return;
+
+    widget.integration = widget.integration || {};
+    widget.integration.config = widget.integration.config || {};
+
+    const field = {
+      name: String(fieldName || ''),
+      type: String(fieldType || 'text'),
+      special: String(special || ''),
+      target: String(target || ''),
+    };
+    writeSchemaValue(widget.integration.config, field, rawValue);
+
+    setRegionWidgets(region, list);
+    commitDesigner(true);
+  }
+
+  function renderRegionWidgetList(region) {
+    const host = region === 'header' ? headerWidgetList : footerWidgetList;
+    const list = regionWidgets(region);
+    if (!host) return;
+    if (!list.length) {
+      host.innerHTML = '<p class="muted" style="margin:0;">No widgets in this region.</p>';
+      return;
+    }
+
+    host.innerHTML = list.map((widget, i) => {
+      const l = normalizeRegionLayout(widget.layout || {}, regionRows(region), widget.size || 'medium');
+      const sizeOptions = regionWidgetSizes
+        .map((size) => `<option value="${size}" ${size === (widget.size || 'half') ? 'selected' : ''}>${size}</option>`)
+        .join('');
+      const configFields = regionWidgetConfigFieldsMarkup(widget, region, i);
+      return `<div style="border:1px solid #dce4ec; border-radius:8px; padding:8px; margin-bottom:8px; background:#fff;">
+        <div style="display:grid; grid-template-columns: 1fr 0.8fr auto; gap:8px; align-items:end; margin-bottom:8px;">
+          <label style="margin:0; font-size:11px;">Title
+            <input style="margin-top:4px;" value="${escapeHtml(widget.title || widget.type || 'Widget')}" onchange="updateRegionWidgetField('${region}', ${i}, 'title', this.value)">
+          </label>
+          <label style="margin:0; font-size:11px;">Size
+            <select style="margin-top:4px;" onchange="updateRegionWidgetField('${region}', ${i}, 'size', this.value)">${sizeOptions}</select>
+          </label>
+          <button type="button" class="btn warn" style="padding:4px 8px; font-size:12px;" onclick="removeRegionWidget('${region}', ${i})">Remove</button>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:6px; border:1px solid #e5ebf1; border-radius:8px; padding:8px; background:#fbfdff;">${configFields}</div>
+        <div class="muted" style="margin-top:6px; font-size:11px;">x:${l.x} y:${l.y} w:${l.w} h:${l.h}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderRegionDesigner(region) {
+    const board = region === 'header' ? headerBoard : footerBoard;
+    if (!board) return;
+    const enabled = regionEnabled(region);
+    const rows = regionRows(region);
+    const cols = gridCols();
+    const list = regionWidgets(region);
+
+    board.innerHTML = '';
+    board.style.height = `${Math.max(64, rows * 34)}px`;
+    drawGridBackgroundFor(board, cols, rows, enabled ? '#fbfdff' : '#f7f7f7');
+
+    if (!enabled) {
+      const disabled = document.createElement('div');
+      disabled.style.position = 'absolute';
+      disabled.style.inset = '0';
+      disabled.style.display = 'flex';
+      disabled.style.alignItems = 'center';
+      disabled.style.justifyContent = 'center';
+      disabled.style.color = '#6d7a88';
+      disabled.style.fontSize = '12px';
+      disabled.style.background = 'rgba(255,255,255,0.78)';
+      disabled.textContent = region === 'header' ? 'Header is disabled' : 'Footer is disabled';
+      board.appendChild(disabled);
+      renderRegionWidgetList(region);
+      return;
+    }
+
+    list.forEach((widget, index) => {
+      const normalized = normalizeRegionLayout(widget.layout || {}, rows, widget.size || 'medium');
+      widget.layout = findNearestFreeRegion(region, normalized, index);
+      const l = widget.layout;
+
+      const box = document.createElement('div');
+      box.style.position = 'absolute';
+      box.style.left = `${(l.x / cols) * 100}%`;
+      box.style.top = `${(l.y / rows) * 100}%`;
+      box.style.width = `${(l.w / cols) * 100}%`;
+      box.style.height = `${(l.h / rows) * 100}%`;
+      box.style.border = '1px solid #123047';
+      box.style.background = '#ffffff';
+      box.style.padding = '2px 20px 2px 4px';
+      box.style.fontSize = '11px';
+      box.style.cursor = 'move';
+      box.style.userSelect = 'none';
+      box.style.zIndex = '2';
+      const previewMarkup = regionPreviewMarkup(widget, true);
+      box.innerHTML = isStackedWidget(widget) ? previewMarkup : `<strong>${widget.title || widget.type}</strong><br>${previewMarkup}`;
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = 'x';
+      removeBtn.style.position = 'absolute';
+      removeBtn.style.right = '2px';
+      removeBtn.style.top = '2px';
+      removeBtn.style.border = '0';
+      removeBtn.style.background = '#b33d2f';
+      removeBtn.style.color = '#fff';
+      removeBtn.style.width = '16px';
+      removeBtn.style.height = '16px';
+      removeBtn.style.borderRadius = '50%';
+      removeBtn.style.padding = '0';
+      removeBtn.style.cursor = 'pointer';
+      removeBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        removeRegionWidget(region, index);
+      });
+      box.appendChild(removeBtn);
+
+      const resize = document.createElement('div');
+      resize.style.position = 'absolute';
+      resize.style.right = '0';
+      resize.style.bottom = '0';
+      resize.style.width = '10px';
+      resize.style.height = '10px';
+      resize.style.background = '#123047';
+      resize.style.cursor = 'nwse-resize';
+      box.appendChild(resize);
+
+      box.addEventListener('mousedown', (ev) => startRegionDrag(ev, region, index, 'move'));
+      resize.addEventListener('mousedown', (ev) => {
+        ev.stopPropagation();
+        startRegionDrag(ev, region, index, 'resize');
+      });
+
+      board.appendChild(box);
+    });
+
+    renderRegionWidgetList(region);
+  }
+
+  function renderRegionDesigners() {
+    renderRegionDesigner('header');
+    renderRegionDesigner('footer');
+  }
+
+  function startDrag(ev, index, mode) {
+    ev.preventDefault();
+    const widget = widgets[index];
+    if (!widget) return;
+
+    widget.layout = normalizeMainLayout(widget.layout || { x: 0, y: 0, w: 1, h: 1 });
+    dragState = {
+      index,
+      mode,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      origX: safeNumber(widget.layout.x, 0),
+      origY: safeNumber(widget.layout.y, 0),
+      origW: safeNumber(widget.layout.w, 1),
+      origH: safeNumber(widget.layout.h, 1)
+    };
+
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('mouseup', stopDrag);
+  }
+
+  function onDragMove(ev) {
+    if (!dragState) return;
+    const dims = getCellSize();
+    const dxCells = Math.round((ev.clientX - dragState.startX) / dims.cellW);
+    const dyCells = Math.round((ev.clientY - dragState.startY) / dims.cellH);
+    const cols = gridCols();
+    const bounds = contentBounds();
+    const widget = widgets[dragState.index];
+    if (!widget) return;
+
+    const base = normalizeMainLayout(widget.layout || { x: 0, y: 0, w: 1, h: 1 });
+    let candidate = { ...base };
+
+    if (dragState.mode === 'move') {
+      candidate.x = clamp(dragState.origX + dxCells, 0, cols - base.w);
+      candidate.y = clamp(dragState.origY + dyCells, bounds.top, bounds.bottom - base.h);
+    } else {
+      candidate.w = clamp(dragState.origW + dxCells, 1, cols - base.x);
+      candidate.h = clamp(dragState.origH + dyCells, 1, bounds.bottom - base.y);
+    }
+
+    widget.layout = findNearestFreeMain(candidate, dragState.index);
+    syncWidgets();
+    renderPreview();
+  }
+
+  function stopDrag() {
+    dragState = null;
+    document.removeEventListener('mousemove', onDragMove);
+    document.removeEventListener('mouseup', stopDrag);
+    pushHistory();
+  }
+
+  function startRegionDrag(ev, region, index, mode) {
+    ev.preventDefault();
+    const list = regionWidgets(region);
+    if (!list[index]) return;
+    const rows = regionRows(region);
+    list[index].layout = normalizeRegionLayout(list[index].layout || {}, rows, list[index].size || 'medium');
+
+    regionDragState = {
+      region,
+      index,
+      mode,
+      board: region === 'header' ? headerBoard : footerBoard,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      origX: safeNumber(list[index].layout.x, 0),
+      origY: safeNumber(list[index].layout.y, 0),
+      origW: safeNumber(list[index].layout.w, 1),
+      origH: safeNumber(list[index].layout.h, 1),
+    };
+
+    document.addEventListener('mousemove', onRegionDragMove);
+    document.addEventListener('mouseup', stopRegionDrag);
+  }
+
+  function onRegionDragMove(ev) {
+    if (!regionDragState) return;
+
+    const cols = gridCols();
+    const rows = regionRows(regionDragState.region);
+    const dims = getCellSizeFor(regionDragState.board, cols, rows);
+    const dxCells = Math.round((ev.clientX - regionDragState.startX) / dims.cellW);
+    const dyCells = Math.round((ev.clientY - regionDragState.startY) / dims.cellH);
+
+    const list = regionWidgets(regionDragState.region);
+    const widget = list[regionDragState.index];
+    if (!widget) return;
+
+    const base = normalizeRegionLayout(widget.layout || {}, rows, widget.size || 'medium');
+    let candidate = { ...base };
+
+    if (regionDragState.mode === 'move') {
+      candidate.x = clamp(regionDragState.origX + dxCells, 0, cols - base.w);
+      candidate.y = clamp(regionDragState.origY + dyCells, 0, rows - base.h);
+    } else {
+      candidate.w = clamp(regionDragState.origW + dxCells, 1, cols - base.x);
+      candidate.h = clamp(regionDragState.origH + dyCells, 1, rows - base.y);
+    }
+
+    widget.layout = findNearestFreeRegion(regionDragState.region, candidate, regionDragState.index);
+    syncWidgets();
+    renderRegionDesigners();
+    renderPreview();
+  }
+
+  function stopRegionDrag() {
+    regionDragState = null;
+    document.removeEventListener('mousemove', onRegionDragMove);
+    document.removeEventListener('mouseup', stopRegionDrag);
+    pushHistory();
+  }
+
+  function updateAdvancedInputsForWidget(i) {
+    const layout = widgets[i]?.layout || {};
+    const map = {
+      'layout.x': layout.x,
+      'layout.y': layout.y,
+      'layout.w': layout.w,
+      'layout.h': layout.h
+    };
+    Object.entries(map).forEach(([key, value]) => {
+      const el = document.querySelector(`[data-i="${i}"][data-k="${key}"]`);
+      if (el) el.value = value;
+    });
+  }
+  function renderWidgetsEditor() {
     const host = document.getElementById('widget-editor');
     host.innerHTML = '';
+
     widgets.forEach((w, i) => {
-      const layout = w.layout || {};
+      const layout = normalizeMainLayout(w.layout || {});
       const refresh = w.refresh || {};
       const integ = w.integration || {};
-      const cfg = integ.config || {};
-      const source = (w.type === 'weather') ? (integ.provider || 'openmeteo') : ((w.type === 'news') ? (cfg.source || 'google') : '');
+      const configFields = mainWidgetConfigFieldsMarkup(w, i);
+
       const card = document.createElement('div');
       card.style.border = '1px solid #d6dde5';
       card.style.borderRadius = '10px';
@@ -201,7 +1350,7 @@
       card.style.marginBottom = '10px';
       card.innerHTML = `
         <div class="grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px;">
-          <div><label>Section ID</label><input data-i="${i}" data-k="id" value="${w.id || ''}"></div>
+          <div><label>Widget ID</label><input data-i="${i}" data-k="id" value="${w.id || ''}"></div>
           <div><label>Type</label><input data-i="${i}" data-k="type" value="${w.type || ''}"></div>
           <div><label>Title</label><input data-i="${i}" data-k="title" value="${w.title || ''}"></div>
           <div><label>Refresh Mode</label>
@@ -216,40 +1365,54 @@
           <div><label>H</label><input type="number" data-i="${i}" data-k="layout.h" value="${layout.h ?? 1}"></div>
           <div><label>Refresh Minutes</label><input type="number" data-i="${i}" data-k="refresh.minutes" value="${refresh.minutes ?? 15}"></div>
           <div><label>Provider</label><input data-i="${i}" data-k="integration.provider" value="${integ.provider || ''}"></div>
-          <div>
-            <label>Default Source</label>
-            <select data-i="${i}" data-k="integration.config.source">${sourceOptions(w.type, source)}</select>
+          <div style="grid-column: span 2;">
+            <label>Widget Config</label>
+            <div style="margin-top:4px; display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:6px; border:1px solid #e5ebf1; border-radius:8px; padding:8px; background:#fbfdff;">${configFields}</div>
           </div>
-          <div><label>Config JSON</label><input data-i="${i}" data-k="integration.config_json" value='${JSON.stringify(cfg).replace(/'/g, "&#39;")}'></div>
         </div>
-        <div style="margin-top:8px"><button type="button" class="btn warn" onclick="removeWidget(${i})">Remove Section</button></div>
+        <div style="margin-top:8px"><button type="button" class="btn warn" onclick="removeWidget(${i})">Remove Widget</button></div>
       `;
       host.appendChild(card);
     });
 
-    host.querySelectorAll('input,select').forEach(el => {
-      el.addEventListener('change', () => applyField(el));
-      el.addEventListener('input', () => applyField(el));
+    host.querySelectorAll('input[data-k],select[data-k]').forEach(el => {
+      el.addEventListener('change', () => applyField(el, true));
+      el.addEventListener('input', () => applyField(el, false));
     });
-
-    renderPreview();
   }
 
-  function applyField(el) {
+  function updateMainWidgetConfigField(index, fieldName, rawValue, fieldType, special, target) {
+    const widget = widgets[index];
+    if (!widget) return;
+
+    widget.integration = widget.integration || {};
+    widget.integration.config = widget.integration.config || {};
+
+    const field = {
+      name: String(fieldName || ''),
+      type: String(fieldType || 'text'),
+      special: String(special || ''),
+      target: String(target || ''),
+    };
+    writeSchemaValue(widget.integration.config, field, rawValue);
+    commitDesigner(true);
+  }
+  function applyField(el, commit) {
     const i = Number(el.getAttribute('data-i'));
     const key = el.getAttribute('data-k');
     if (!widgets[i]) return;
 
     if (key === 'id' || key === 'type' || key === 'title') {
       widgets[i][key] = el.value;
-      renderPreview();
+      commitDesigner(commit);
       return;
     }
 
     if (key.startsWith('layout.')) {
       widgets[i].layout = widgets[i].layout || {};
       widgets[i].layout[key.split('.')[1]] = Number(el.value);
-      renderPreview();
+      widgets[i].layout = findNearestFreeMain(normalizeMainLayout(widgets[i].layout), i);
+      commitDesigner(commit);
       return;
     }
 
@@ -257,46 +1420,236 @@
       widgets[i].refresh = widgets[i].refresh || {};
       const child = key.split('.')[1];
       widgets[i].refresh[child] = child === 'minutes' ? Number(el.value) : el.value;
-      renderPreview();
+      commitDesigner(commit);
       return;
     }
 
     if (key === 'integration.provider') {
       widgets[i].integration = widgets[i].integration || {};
       widgets[i].integration.provider = el.value;
-      renderPreview();
+      commitDesigner(commit);
       return;
     }
 
     widgets[i].integration = widgets[i].integration || {};
     widgets[i].integration.config = widgets[i].integration.config || {};
-    if (key === 'integration.config.source') {
-      widgets[i].integration.config.source = el.value;
-      renderPreview();
-      return;
-    }
-    if (key === 'integration.config_json') {
-      try {
-        widgets[i].integration.config = JSON.parse(el.value || '{}');
-      } catch {
-      }
-      renderPreview();
-    }
+  }
+
+  function commitDesigner(push) {
+    syncWidgets();
+    renderWidgetsEditor();
+    renderRegionDesigners();
+    renderPreview();
+    if (push) pushHistory();
+    updateActionButtons();
   }
 
   function removeWidget(i) {
     widgets.splice(i, 1);
-    renderWidgets();
+    if (selectedMainIndex >= widgets.length) selectedMainIndex = widgets.length - 1;
+    commitDesigner(true);
+  }
+
+  function addRegionWidget(region) {
+    const keySelect = document.getElementById(`${region}-template-select`);
+    const sizeSelect = document.getElementById(`${region}-template-size`);
+    const key = keySelect?.value || '';
+    const size = sizeSelect?.value || 'medium';
+    if (!key || !regionTemplates[key]) return;
+
+    const list = regionWidgets(region);
+    const candidate = makeRegionWidget(region, key, size);
+    candidate.layout = findNearestFreeRegion(region, candidate.layout, -1);
+    list.push(candidate);
+    setRegionWidgets(region, list);
+    commitDesigner(true);
+  }
+
+  function removeRegionWidget(region, index) {
+    const list = regionWidgets(region);
+    list.splice(index, 1);
+    setRegionWidgets(region, list);
+    commitDesigner(true);
+  }
+
+  function autoPackRegion(region) {
+    const list = regionWidgets(region);
+    const cols = gridCols();
+    const rows = regionRows(region);
+    let cursorX = 0;
+    let cursorY = 0;
+    let rowHeight = 1;
+
+    list.forEach((widget, i) => {
+      const l = normalizeRegionLayout(widget.layout || {}, rows, widget.size || 'medium');
+      if (cursorX + l.w > cols) {
+        cursorX = 0;
+        cursorY += rowHeight;
+        rowHeight = 1;
+      }
+      const fallbackY = clamp(cursorY, 0, Math.max(0, rows - l.h));
+      widget.layout = findNearestFreeRegion(region, { x: cursorX, y: fallbackY, w: l.w, h: l.h }, i);
+      cursorX = widget.layout.x + widget.layout.w;
+      rowHeight = Math.max(rowHeight, widget.layout.h);
+    });
+
+    commitDesigner(true);
+  }
+
+  function autoArrangeMainWidgets() {
+    const cols = gridCols();
+    const bounds = contentBounds();
+    let cursorX = 0;
+    let cursorY = bounds.top;
+    let rowHeight = 1;
+
+    widgets.forEach((widget, i) => {
+      const l = normalizeMainLayout(widget.layout || {});
+      if (cursorX + l.w > cols) {
+        cursorX = 0;
+        cursorY += rowHeight;
+        rowHeight = 1;
+      }
+      const fallbackY = clamp(cursorY, bounds.top, Math.max(bounds.top, bounds.bottom - l.h));
+      widget.layout = findNearestFreeMain({ x: cursorX, y: fallbackY, w: l.w, h: l.h }, i);
+      cursorX = widget.layout.x + widget.layout.w;
+      rowHeight = Math.max(rowHeight, widget.layout.h);
+    });
+
+    commitDesigner(true);
+  }
+
+  function duplicateSelectedMainWidget() {
+    if (selectedMainIndex < 0 || selectedMainIndex >= widgets.length) return;
+    const source = widgets[selectedMainIndex];
+    const clone = JSON.parse(JSON.stringify(source));
+    clone.id = makeWidgetId(clone.type || 'widget');
+    const base = normalizeMainLayout(clone.layout || { x: 0, y: 0, w: 1, h: 1 });
+    clone.layout = findNearestFreeMain({ x: base.x + 1, y: base.y + 1, w: base.w, h: base.h }, -1);
+    widgets.push(clone);
+    selectedMainIndex = widgets.length - 1;
+    commitDesigner(true);
   }
 
   function syncWidgets() {
     widgetsInput.value = JSON.stringify(widgets);
+    headerWidgetsInput.value = JSON.stringify(headerWidgets);
+    footerWidgetsInput.value = JSON.stringify(footerWidgets);
   }
 
-  [layoutInputs.cols, layoutInputs.rows, layoutInputs.titleEnabled, layoutInputs.titleHeight, layoutInputs.footerEnabled, layoutInputs.footerHeight]
-    .forEach(el => { if (el) { el.addEventListener('change', renderPreview); el.addEventListener('input', renderPreview); } });
+  async function loadRealData(force = false) {
+    if (previewModeSelect.value !== 'real') return;
+    try {
+      previewStatus.textContent = 'Loading real preview data...';
+      const resp = await fetch(`/designer/preview-data?dashboard_id=${encodeURIComponent(dashboardId)}&force=${force ? 1 : 0}`);
+      const body = await resp.json();
+      if (!resp.ok) {
+        previewStatus.textContent = `Preview data error: ${body.error || resp.status}`;
+        return;
+      }
+      realDataByWidgetId = {};
+      (body.widgets || []).forEach(w => { realDataByWidgetId[w.id] = w.data || {}; });
+      previewStatus.textContent = `Loaded real data at ${new Date().toLocaleTimeString()}`;
+      renderRegionDesigners();
+      renderPreview();
+    } catch (err) {
+      previewStatus.textContent = `Preview fetch failed: ${err}`;
+    }
+  }
 
-  renderWidgets();
+  function handleDesignerHotkeys(ev) {
+    const tag = (ev.target?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === 'z') {
+      ev.preventDefault();
+      undoState();
+      return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === 'y' || (ev.shiftKey && ev.key.toLowerCase() === 'z'))) {
+      ev.preventDefault();
+      redoState();
+      return;
+    }
+
+    if (selectedMainIndex < 0 || selectedMainIndex >= widgets.length) return;
+
+    if (ev.key === 'Delete') {
+      ev.preventDefault();
+      removeWidget(selectedMainIndex);
+      return;
+    }
+
+    const delta = ev.shiftKey ? 2 : 1;
+    const widget = widgets[selectedMainIndex];
+    const base = normalizeMainLayout(widget.layout || {});
+    let candidate = { ...base };
+    if (ev.key === 'ArrowLeft') candidate.x -= delta;
+    else if (ev.key === 'ArrowRight') candidate.x += delta;
+    else if (ev.key === 'ArrowUp') candidate.y -= delta;
+    else if (ev.key === 'ArrowDown') candidate.y += delta;
+    else return;
+
+    ev.preventDefault();
+    widget.layout = findNearestFreeMain(candidate, selectedMainIndex);
+    commitDesigner(true);
+  }
+
+  const advancedToggle = document.getElementById('advanced-toggle');
+  const advancedPanel = document.getElementById('advanced-panel');
+  advancedToggle.addEventListener('change', () => {
+    advancedPanel.style.display = advancedToggle.checked ? 'block' : 'none';
+  });
+
+  [layoutInputs.cols, layoutInputs.rows, layoutInputs.titleEnabled, layoutInputs.titleHeight, layoutInputs.footerEnabled, layoutInputs.footerHeight]
+    .forEach(el => {
+      if (!el) return;
+      el.addEventListener('change', () => { commitDesigner(true); });
+      el.addEventListener('input', () => { commitDesigner(false); });
+    });
+
+  previewModeSelect.addEventListener('change', async () => {
+    if (previewModeSelect.value === 'real') {
+      await loadRealData(false);
+    }
+    renderRegionDesigners();
+    renderPreview();
+  });
+
+  document.addEventListener('keydown', handleDesignerHotkeys);
+
+  window.addRegionWidget = addRegionWidget;
+  window.removeRegionWidget = removeRegionWidget;
+  window.updateRegionWidgetConfigField = updateRegionWidgetConfigField;
+  window.removeWidget = removeWidget;
+  window.updateMainWidgetConfigField = updateMainWidgetConfigField;
+  window.undoState = undoState;
+  window.redoState = redoState;
+  window.duplicateSelectedMainWidget = duplicateSelectedMainWidget;
+  window.autoArrangeMainWidgets = autoArrangeMainWidgets;
+  window.autoPackRegion = autoPackRegion;
+  window.loadRealData = loadRealData;
+  window.syncWidgets = syncWidgets;
+  window.renderPreview = renderPreview;
+  window.renderRegionDesigners = renderRegionDesigners;
+
+  syncWidgets();
+  renderWidgetsEditor();
+  renderRegionDesigners();
+  renderPreview();
+  pushHistory();
+  updateActionButtons();
+
 </script>
 {% endif %}
 {% endblock %}
+
+
+
+
+
+
+
+
+
+

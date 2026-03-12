@@ -70,3 +70,9 @@ class ManualRefreshResponse(BaseModel):
     dashboard_id: str
     refreshed_widgets: list[str]
     skipped_widgets: list[str]
+class ProvisionClaimRequest(BaseModel):
+    claim_code: str
+    device_uid: str = ""
+    firmware_version: str = ""
+    panel_profile: str = ""
+    platformio_env: str = ""

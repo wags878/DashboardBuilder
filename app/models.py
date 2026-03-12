@@ -99,3 +99,17 @@ class IntegrationPreset(SQLModel, table=True):
     enabled: bool = True
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+class FirmwareImage(SQLModel, table=True):
+    id: str = Field(default_factory=new_id, primary_key=True)
+    name: str = Field(index=True, max_length=120)
+    slug: str = Field(index=True, unique=True, max_length=140)
+    board: str = Field(default="seeed_xiao_esp32c6", max_length=120)
+    panel_profile: str = Field(default="solum_ed057tc6_baseline", max_length=120)
+    platformio_env: str = Field(default="seeed_xiao_esp32c6_solum_baseline_locked", max_length=160)
+    version: str = Field(default="0.1.0", max_length=40)
+    binary_url: str = ""
+    notes: str = ""
+    is_default: bool = True
+    active: bool = True
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
