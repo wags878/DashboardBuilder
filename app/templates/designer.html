@@ -78,7 +78,14 @@
       <label><input type="checkbox" name="footer_enabled" {% if layout_config.regions.footer.enabled %}checked{% endif %}> Footer Enabled</label>
       <label>Footer Height (rows)</label>
       <input type="number" name="footer_height" min="1" max="4" value="{{ layout_config.regions.footer.height }}">
+
+      <h3 style="margin-top:14px">Live Browser Preview</h3>
+      <p class="muted">Preview matches current section geometry before push to e-ink device.</p>
+      <div style="max-width:700px; border:1px dashed #bcc8d5; border-radius:10px; padding:10px; background:#fafcff;">
+        <div id="preview-board" style="width:100%; aspect-ratio:600/448; border:1px solid #111; background:#fff;"></div>
+      </div>
     </div>
+
     <div>
       <h3>Section Editor</h3>
       <p class="muted">Edit position and size (`x`,`y`,`w`,`h`), refresh mode, and integration config. Remove sections as needed.</p>
@@ -93,12 +100,89 @@
   const weatherChoices = {{ weather_source_choices|tojson }};
   const newsChoices = {{ news_source_choices|tojson }};
   const widgetsInput = document.getElementById('widgets_json');
+  const layoutInputs = {
+    cols: document.querySelector('input[name="grid_columns"]'),
+    rows: document.querySelector('input[name="grid_rows"]'),
+    titleEnabled: document.querySelector('input[name="title_enabled"]'),
+    titleHeight: document.querySelector('input[name="title_height"]'),
+    footerEnabled: document.querySelector('input[name="footer_enabled"]'),
+    footerHeight: document.querySelector('input[name="footer_height"]')
+  };
+
   let widgets = [];
   try { widgets = JSON.parse(widgetsInput.value || '[]'); } catch (_) { widgets = []; }
 
   function sourceOptions(type, selected) {
     const list = type === 'weather' ? weatherChoices : (type === 'news' ? newsChoices : []);
+    if (!list.length) return '<option value="">(none)</option>';
     return list.map(s => `<option value="${s}" ${s===selected?'selected':''}>${s}</option>`).join('');
+  }
+
+  function widgetBadge(widget) {
+    const integ = widget.integration || {};
+    const cfg = integ.config || {};
+    if (widget.type === 'news') return `source: ${cfg.source || 'google'}`;
+    if (widget.type === 'weather') return `provider: ${integ.provider || 'openmeteo'}`;
+    if (widget.type === 'quote') return `source: ${cfg.source || 'zenquotes'}`;
+    if (widget.type === 'calendar') return `provider: ${integ.provider || 'google_calendar'}`;
+    return integ.provider ? `provider: ${integ.provider}` : 'custom section';
+  }
+
+  function renderPreview() {
+    const board = document.getElementById('preview-board');
+    const cols = Math.max(1, Number(layoutInputs.cols.value || 12));
+    const rows = Math.max(1, Number(layoutInputs.rows.value || 8));
+    const titleEnabled = !!layoutInputs.titleEnabled.checked;
+    const footerEnabled = !!layoutInputs.footerEnabled.checked;
+    const titleHeight = Math.max(1, Number(layoutInputs.titleHeight.value || 1));
+    const footerHeight = Math.max(1, Number(layoutInputs.footerHeight.value || 1));
+
+    board.innerHTML = '';
+    board.style.display = 'grid';
+    board.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    board.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+    board.style.gap = '1px';
+    board.style.background = '#d9e0e8';
+
+    const addRegion = (label, rowStart, rowSpan) => {
+      const el = document.createElement('div');
+      el.style.gridColumn = `1 / span ${cols}`;
+      el.style.gridRow = `${rowStart} / span ${rowSpan}`;
+      el.style.background = '#f0f3f6';
+      el.style.border = '1px solid #9cadbc';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'space-between';
+      el.style.padding = '2px 8px';
+      el.style.fontSize = '11px';
+      el.innerHTML = `<strong>${label}</strong><span>${rowSpan} row(s)</span>`;
+      board.appendChild(el);
+    };
+
+    if (titleEnabled) addRegion('Title Bar', 1, Math.min(titleHeight, rows));
+    if (footerEnabled) {
+      const start = Math.max(1, rows - footerHeight + 1);
+      addRegion('Footer', start, Math.min(footerHeight, rows));
+    }
+
+    widgets.forEach((w, i) => {
+      const layout = w.layout || {};
+      const x = Math.max(0, Number(layout.x ?? 0));
+      const y = Math.max(0, Number(layout.y ?? 0));
+      const spanW = Math.max(1, Number(layout.w ?? 1));
+      const spanH = Math.max(1, Number(layout.h ?? 1));
+
+      const el = document.createElement('div');
+      el.style.gridColumn = `${Math.min(cols, x + 1)} / span ${Math.min(cols, spanW)}`;
+      el.style.gridRow = `${Math.min(rows, y + 1)} / span ${Math.min(rows, spanH)}`;
+      el.style.background = '#fff';
+      el.style.border = '1px solid #1a252f';
+      el.style.padding = '4px 6px';
+      el.style.fontSize = '11px';
+      el.style.overflow = 'hidden';
+      el.innerHTML = `<strong>${w.title || w.type || ('Section ' + (i + 1))}</strong><br><span>${widgetBadge(w)}</span>`;
+      board.appendChild(el);
+    });
   }
 
   function renderWidgets() {
@@ -145,7 +229,10 @@
 
     host.querySelectorAll('input,select').forEach(el => {
       el.addEventListener('change', () => applyField(el));
+      el.addEventListener('input', () => applyField(el));
     });
+
+    renderPreview();
   }
 
   function applyField(el) {
@@ -155,12 +242,14 @@
 
     if (key === 'id' || key === 'type' || key === 'title') {
       widgets[i][key] = el.value;
+      renderPreview();
       return;
     }
 
     if (key.startsWith('layout.')) {
       widgets[i].layout = widgets[i].layout || {};
       widgets[i].layout[key.split('.')[1]] = Number(el.value);
+      renderPreview();
       return;
     }
 
@@ -168,12 +257,14 @@
       widgets[i].refresh = widgets[i].refresh || {};
       const child = key.split('.')[1];
       widgets[i].refresh[child] = child === 'minutes' ? Number(el.value) : el.value;
+      renderPreview();
       return;
     }
 
     if (key === 'integration.provider') {
       widgets[i].integration = widgets[i].integration || {};
       widgets[i].integration.provider = el.value;
+      renderPreview();
       return;
     }
 
@@ -181,6 +272,7 @@
     widgets[i].integration.config = widgets[i].integration.config || {};
     if (key === 'integration.config.source') {
       widgets[i].integration.config.source = el.value;
+      renderPreview();
       return;
     }
     if (key === 'integration.config_json') {
@@ -188,6 +280,7 @@
         widgets[i].integration.config = JSON.parse(el.value || '{}');
       } catch {
       }
+      renderPreview();
     }
   }
 
@@ -199,6 +292,9 @@
   function syncWidgets() {
     widgetsInput.value = JSON.stringify(widgets);
   }
+
+  [layoutInputs.cols, layoutInputs.rows, layoutInputs.titleEnabled, layoutInputs.titleHeight, layoutInputs.footerEnabled, layoutInputs.footerHeight]
+    .forEach(el => { if (el) { el.addEventListener('change', renderPreview); el.addEventListener('input', renderPreview); } });
 
   renderWidgets();
 </script>

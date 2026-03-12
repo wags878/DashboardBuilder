@@ -66,13 +66,60 @@ def _render(request: Request, template_name: str, context: dict[str, Any]) -> HT
     return templates.TemplateResponse(template_name, base_context)
 
 
+def _normalized_layout(layout_candidate: dict[str, Any] | None) -> dict[str, Any]:
+    layout = json.loads(json.dumps(DEFAULT_LAYOUT))
+    if not isinstance(layout_candidate, dict):
+        return layout
+
+    orientation = layout_candidate.get("orientation")
+    if isinstance(orientation, str) and orientation.strip():
+        layout["orientation"] = orientation.strip().lower()
+
+    grid = layout_candidate.get("grid")
+    if isinstance(grid, dict):
+        cols = grid.get("columns")
+        rows = grid.get("rows")
+        if isinstance(cols, int):
+            layout["grid"]["columns"] = max(1, min(24, cols))
+        if isinstance(rows, int):
+            layout["grid"]["rows"] = max(1, min(24, rows))
+
+    size = layout_candidate.get("size")
+    if isinstance(size, dict):
+        width = size.get("width")
+        height = size.get("height")
+        if isinstance(width, int) and width > 0:
+            layout["size"]["width"] = width
+        if isinstance(height, int) and height > 0:
+            layout["size"]["height"] = height
+
+    regions = layout_candidate.get("regions")
+    if isinstance(regions, dict):
+        title = regions.get("title_bar")
+        footer = regions.get("footer")
+
+        if isinstance(title, dict):
+            if isinstance(title.get("enabled"), bool):
+                layout["regions"]["title_bar"]["enabled"] = title["enabled"]
+            if isinstance(title.get("height"), int):
+                layout["regions"]["title_bar"]["height"] = max(1, min(4, title["height"]))
+
+        if isinstance(footer, dict):
+            if isinstance(footer.get("enabled"), bool):
+                layout["regions"]["footer"]["enabled"] = footer["enabled"]
+            if isinstance(footer.get("height"), int):
+                layout["regions"]["footer"]["height"] = max(1, min(4, footer["height"]))
+
+    return layout
+
+
 def _default_layout_for_dashboard(dashboard: Dashboard, template: Template | None) -> dict[str, Any]:
     layout = (dashboard.refresh_defaults or {}).get("layout")
     if isinstance(layout, dict) and layout:
-        return layout
+        return _normalized_layout(layout)
     if template and isinstance(template.layout, dict) and template.layout:
-        return template.layout
-    return DEFAULT_LAYOUT
+        return _normalized_layout(template.layout)
+    return _normalized_layout(None)
 
 
 def _seed_defaults(session: Session) -> None:
