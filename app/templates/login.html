@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Sign In</h2>
+<p class="muted">Basic authentication for designer and management tabs.</p>
+<form method="post" action="/login" style="max-width:420px">
+  <label>Username</label>
+  <input type="text" name="username" required>
+  <label>Password</label>
+  <input type="password" name="password" required>
+  {% if error %}<p style="color:#b33d2f">{{ error }}</p>{% endif %}
+  <button class="btn" type="submit">Login</button>
+</form>
+{% endblock %}

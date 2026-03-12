@@ -32,12 +32,7 @@ def _client() -> httpx.Client:
 
 
 def _resolve_zip(zipcode: str) -> tuple[float, float, str] | None:
-    params = {
-        "name": zipcode,
-        "count": 1,
-        "language": "en",
-        "format": "json",
-    }
+    params = {"name": zipcode, "count": 1, "language": "en", "format": "json"}
     with _client() as client:
         response = client.get("https://geocoding-api.open-meteo.com/v1/search", params=params)
         response.raise_for_status()
@@ -49,15 +44,11 @@ def _resolve_zip(zipcode: str) -> tuple[float, float, str] | None:
     return float(top["latitude"]), float(top["longitude"]), top.get("name", f"ZIP {zipcode}")
 
 
-def _fetch_weather_openmeteo(config: dict[str, Any]) -> dict[str, Any]:
+def _fetch_weather_openmeteo(config: dict[str, Any], requested_provider: str = "openmeteo") -> dict[str, Any]:
     zipcode = str(config.get("zipcode", "63122"))
     location = _resolve_zip(zipcode)
     if not location:
-        return {
-            "provider": "openmeteo",
-            "status": "error",
-            "message": f"Could not resolve zipcode {zipcode}.",
-        }
+        return {"provider": requested_provider, "status": "error", "message": f"Could not resolve zipcode {zipcode}."}
 
     latitude, longitude, location_name = location
     params = {
@@ -83,17 +74,10 @@ def _fetch_weather_openmeteo(config: dict[str, Any]) -> dict[str, Any]:
 
     forecast = []
     for day, hi, lo, code in zip(times[:5], highs[:5], lows[:5], codes[:5]):
-        forecast.append(
-            {
-                "date": day,
-                "high_f": hi,
-                "low_f": lo,
-                "weather_code": code,
-            }
-        )
+        forecast.append({"date": day, "high_f": hi, "low_f": lo, "weather_code": code})
 
-    return {
-        "provider": "openmeteo",
+    payload = {
+        "provider": requested_provider,
         "status": "ok",
         "zipcode": zipcode,
         "location": location_name,
@@ -104,6 +88,9 @@ def _fetch_weather_openmeteo(config: dict[str, Any]) -> dict[str, Any]:
         },
         "forecast": forecast,
     }
+    if requested_provider in {"wttr", "nws"}:
+        payload["note"] = f"Manager fallback currently uses Open-Meteo transport for {requested_provider}."
+    return payload
 
 
 def _feed_url(config: dict[str, Any]) -> str:
@@ -116,8 +103,7 @@ def _feed_url(config: dict[str, Any]) -> str:
 
 
 def _fetch_news_rss(config: dict[str, Any]) -> dict[str, Any]:
-    limit = int(config.get("limit", 5))
-    limit = max(1, min(limit, 10))
+    limit = max(1, min(int(config.get("limit", 5)), 10))
     url = _feed_url(config)
 
     with _client() as client:
@@ -133,21 +119,17 @@ def _fetch_news_rss(config: dict[str, Any]) -> dict[str, Any]:
         if title:
             items.append({"title": title, "link": link})
 
-    return {
-        "provider": "rss",
-        "status": "ok",
-        "source_url": url,
-        "headlines": items,
-    }
+    return {"provider": "rss", "status": "ok", "source_url": url, "headlines": items}
 
 
 def _fetch_quote(config: dict[str, Any]) -> dict[str, Any]:
+    source = str(config.get("source", "zenquotes")).strip().lower()
     custom_quote = str(config.get("text", "")).strip()
-    if custom_quote:
+    if source == "custom" or custom_quote:
         return {
             "provider": "quote",
             "status": "ok",
-            "quote": custom_quote,
+            "quote": custom_quote or "Add a custom quote in section config.",
             "author": str(config.get("author", "Custom")).strip() or "Custom",
         }
 
@@ -175,19 +157,20 @@ def _fetch_google_calendar(config: dict[str, Any]) -> dict[str, Any]:
             "events": [],
         }
 
-    # Stub output until OAuth and token storage are wired in.
     return {
         "provider": "google_calendar",
         "status": "stub",
         "calendar_id": str(config.get("calendar_id", "primary")),
         "message": "OAuth flow not yet implemented in this starter.",
-        "events": [
-            {
-                "title": "Example Event",
-                "start": "2026-03-11T09:00:00-06:00",
-                "end": "2026-03-11T09:30:00-06:00",
-            }
-        ],
+        "events": [{"title": "Example Event", "start": "2026-03-11T09:00:00-06:00", "end": "2026-03-11T09:30:00-06:00"}],
+    }
+
+
+def _not_implemented(provider: str) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "status": "not_configured",
+        "message": f"{provider} adapter template is available but runtime fetch is not implemented in this starter.",
     }
 
 
@@ -196,44 +179,33 @@ def direct_source_descriptor(widget: dict[str, Any]) -> dict[str, Any]:
     provider = str(integration.get("provider", "")).strip().lower()
     config = integration.get("config", {}) if isinstance(integration.get("config"), dict) else {}
 
-    if provider == "openmeteo":
+    if provider in {"openmeteo", "wttr", "nws"}:
         zipcode = str(config.get("zipcode", "63122")).strip() or "63122"
         return {
-            "provider": "openmeteo",
-            "fetch_hint": "Device should geocode zipcode then fetch open-meteo forecast.",
+            "provider": provider,
+            "fetch_hint": "Device should geocode zipcode and fetch weather data directly.",
             "config": {"zipcode": zipcode},
         }
     if provider == "rss":
         return {
             "provider": "rss",
-            "fetch_hint": "Device should fetch RSS feed and parse <item><title> entries.",
+            "fetch_hint": "Device should fetch RSS feed and parse item titles.",
             "config": {"url": _feed_url(config), "limit": max(1, min(int(config.get("limit", 5)), 10))},
         }
     if provider == "quote":
-        return {
-            "provider": "quote",
-            "fetch_hint": "Use manager mode for quote widgets unless fixed custom quote.",
-            "config": config,
-        }
+        return {"provider": "quote", "fetch_hint": "Manager mode recommended unless using static quote.", "config": config}
     if provider == "google_calendar":
         return {
             "provider": "google_calendar",
             "fetch_hint": "Prefer manager mode due to OAuth complexity.",
-            "config": {
-                "calendar_id": str(config.get("calendar_id", "primary")),
-                "credentials_ref": str(config.get("credentials_ref", "")),
-            },
+            "config": {"calendar_id": str(config.get("calendar_id", "primary")), "credentials_ref": str(config.get("credentials_ref", ""))},
         }
     return {"provider": provider or "unknown", "config": config}
 
 
 def fetch_widget_data(widget: dict[str, Any]) -> tuple[dict[str, Any], datetime, str]:
-    provider = (
-        str(widget.get("integration", {}).get("provider", "")).strip().lower()
-        if isinstance(widget.get("integration"), dict)
-        else ""
-    )
-    config = widget.get("integration", {}).get("config", {})
+    provider = str(widget.get("integration", {}).get("provider", "")).strip().lower() if isinstance(widget.get("integration"), dict) else ""
+    config = widget.get("integration", {}).get("config", {}) if isinstance(widget.get("integration", {}), dict) else {}
     if not isinstance(config, dict):
         config = {}
 
@@ -241,30 +213,16 @@ def fetch_widget_data(widget: dict[str, Any]) -> tuple[dict[str, Any], datetime,
     expires_at = utcnow() + timedelta(minutes=minutes)
 
     try:
-        if provider == "openmeteo":
-            return _fetch_weather_openmeteo(config), expires_at, ""
+        if provider in {"openmeteo", "wttr", "nws"}:
+            return _fetch_weather_openmeteo(config, requested_provider=provider), expires_at, ""
         if provider == "rss":
             return _fetch_news_rss(config), expires_at, ""
         if provider == "quote":
             return _fetch_quote(config), expires_at, ""
         if provider == "google_calendar":
             return _fetch_google_calendar(config), expires_at, ""
-        return (
-            {
-                "provider": provider or "unknown",
-                "status": "error",
-                "message": "Unknown widget integration provider.",
-            },
-            expires_at,
-            "unknown_provider",
-        )
-    except Exception as exc:  # pragma: no cover - network and remote API failure branch
-        return (
-            {
-                "provider": provider or "unknown",
-                "status": "error",
-                "message": str(exc),
-            },
-            expires_at,
-            str(exc),
-        )
+        if provider in {"accuweather", "openweather", "weatherapi", "newsapi", "nytimes"}:
+            return _not_implemented(provider), expires_at, ""
+        return ({"provider": provider or "unknown", "status": "error", "message": "Unknown widget integration provider."}, expires_at, "unknown_provider")
+    except Exception as exc:  # pragma: no cover
+        return ({"provider": provider or "unknown", "status": "error", "message": str(exc)}, expires_at, str(exc))

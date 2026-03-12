@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Designer</h2>
+<p class="muted">Base layout comes from the original ESP32-C6 firmware dashboard shape. Edit title/footer, add section templates, and resize sections.</p>
+
+<div class="grid cols-2">
+  <div>
+    <h3>Create Dashboard</h3>
+    <form method="post" action="/designer/dashboard-create">
+      <label>Name</label>
+      <input type="text" name="name" placeholder="My Dashboard" required>
+      <label>Base Template</label>
+      <select name="template_id" required>
+        {% for t in templates %}
+        <option value="{{ t.id }}">{{ t.name }}</option>
+        {% endfor %}
+      </select>
+      <label>Timezone</label>
+      <input type="text" name="timezone" value="America/Chicago">
+      <button class="btn" type="submit">Create Dashboard</button>
+    </form>
+  </div>
+
+  <div>
+    <h3>Select Dashboard</h3>
+    {% if dashboards %}
+    <form method="get" action="/designer">
+      <label>Dashboard</label>
+      <select name="dashboard_id" onchange="this.form.submit()">
+        {% for d in dashboards %}
+        <option value="{{ d.id }}" {% if selected_dashboard and selected_dashboard.id == d.id %}selected{% endif %}>{{ d.name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% else %}
+    <p class="muted">No dashboards yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if selected_dashboard %}
+<hr style="border:0;border-top:1px solid #d6dde5;margin:16px 0">
+
+<form method="post" action="/designer/add-section" style="margin-bottom:10px;display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+  <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
+  <div style="min-width:260px">
+    <label>Add Section Template</label>
+    <select name="section_template">
+      {% for key, value in section_templates.items() %}
+      <option value="{{ key }}">{{ value.title }} ({{ key }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button class="btn secondary" type="submit">Add Section</button>
+</form>
+
+<form method="post" action="/designer/refresh-now" style="margin-bottom:16px">
+  <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
+  <button class="btn secondary" type="submit">Refresh Data Now</button>
+</form>
+
+<form method="post" action="/designer/save" id="designer-form">
+  <input type="hidden" name="dashboard_id" value="{{ selected_dashboard.id }}">
+  <input type="hidden" id="widgets_json" name="widgets_json" value='{{ widgets_json|safe }}'>
+
+  <div class="grid cols-2">
+    <div>
+      <h3>Layout</h3>
+      <label>Timezone</label>
+      <input type="text" name="timezone" value="{{ selected_dashboard.timezone }}">
+      <label>Grid Columns</label>
+      <input type="number" name="grid_columns" min="1" max="24" value="{{ layout_config.grid.columns }}">
+      <label>Grid Rows</label>
+      <input type="number" name="grid_rows" min="1" max="24" value="{{ layout_config.grid.rows }}">
+      <label><input type="checkbox" name="title_enabled" {% if layout_config.regions.title_bar.enabled %}checked{% endif %}> Title Bar Enabled</label>
+      <label>Title Bar Height (rows)</label>
+      <input type="number" name="title_height" min="1" max="4" value="{{ layout_config.regions.title_bar.height }}">
+      <label><input type="checkbox" name="footer_enabled" {% if layout_config.regions.footer.enabled %}checked{% endif %}> Footer Enabled</label>
+      <label>Footer Height (rows)</label>
+      <input type="number" name="footer_height" min="1" max="4" value="{{ layout_config.regions.footer.height }}">
+    </div>
+    <div>
+      <h3>Section Editor</h3>
+      <p class="muted">Edit position and size (`x`,`y`,`w`,`h`), refresh mode, and integration config. Remove sections as needed.</p>
+      <div id="widget-editor"></div>
+    </div>
+  </div>
+
+  <button class="btn" type="submit" onclick="syncWidgets()">Save Designer</button>
+</form>
+
+<script>
+  const weatherChoices = {{ weather_source_choices|tojson }};
+  const newsChoices = {{ news_source_choices|tojson }};
+  const widgetsInput = document.getElementById('widgets_json');
+  let widgets = [];
+  try { widgets = JSON.parse(widgetsInput.value || '[]'); } catch (_) { widgets = []; }
+
+  function sourceOptions(type, selected) {
+    const list = type === 'weather' ? weatherChoices : (type === 'news' ? newsChoices : []);
+    return list.map(s => `<option value="${s}" ${s===selected?'selected':''}>${s}</option>`).join('');
+  }
+
+  function renderWidgets() {
+    const host = document.getElementById('widget-editor');
+    host.innerHTML = '';
+    widgets.forEach((w, i) => {
+      const layout = w.layout || {};
+      const refresh = w.refresh || {};
+      const integ = w.integration || {};
+      const cfg = integ.config || {};
+      const source = (w.type === 'weather') ? (integ.provider || 'openmeteo') : ((w.type === 'news') ? (cfg.source || 'google') : '');
+      const card = document.createElement('div');
+      card.style.border = '1px solid #d6dde5';
+      card.style.borderRadius = '10px';
+      card.style.padding = '10px';
+      card.style.marginBottom = '10px';
+      card.innerHTML = `
+        <div class="grid" style="grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px;">
+          <div><label>Section ID</label><input data-i="${i}" data-k="id" value="${w.id || ''}"></div>
+          <div><label>Type</label><input data-i="${i}" data-k="type" value="${w.type || ''}"></div>
+          <div><label>Title</label><input data-i="${i}" data-k="title" value="${w.title || ''}"></div>
+          <div><label>Refresh Mode</label>
+            <select data-i="${i}" data-k="refresh.mode">
+              <option value="manager" ${(refresh.mode||'manager')==='manager'?'selected':''}>manager</option>
+              <option value="device" ${(refresh.mode||'manager')==='device'?'selected':''}>device</option>
+            </select>
+          </div>
+          <div><label>X</label><input type="number" data-i="${i}" data-k="layout.x" value="${layout.x ?? 0}"></div>
+          <div><label>Y</label><input type="number" data-i="${i}" data-k="layout.y" value="${layout.y ?? 0}"></div>
+          <div><label>W</label><input type="number" data-i="${i}" data-k="layout.w" value="${layout.w ?? 1}"></div>
+          <div><label>H</label><input type="number" data-i="${i}" data-k="layout.h" value="${layout.h ?? 1}"></div>
+          <div><label>Refresh Minutes</label><input type="number" data-i="${i}" data-k="refresh.minutes" value="${refresh.minutes ?? 15}"></div>
+          <div><label>Provider</label><input data-i="${i}" data-k="integration.provider" value="${integ.provider || ''}"></div>
+          <div>
+            <label>Default Source</label>
+            <select data-i="${i}" data-k="integration.config.source">${sourceOptions(w.type, source)}</select>
+          </div>
+          <div><label>Config JSON</label><input data-i="${i}" data-k="integration.config_json" value='${JSON.stringify(cfg).replace(/'/g, "&#39;")}'></div>
+        </div>
+        <div style="margin-top:8px"><button type="button" class="btn warn" onclick="removeWidget(${i})">Remove Section</button></div>
+      `;
+      host.appendChild(card);
+    });
+
+    host.querySelectorAll('input,select').forEach(el => {
+      el.addEventListener('change', () => applyField(el));
+    });
+  }
+
+  function applyField(el) {
+    const i = Number(el.getAttribute('data-i'));
+    const key = el.getAttribute('data-k');
+    if (!widgets[i]) return;
+
+    if (key === 'id' || key === 'type' || key === 'title') {
+      widgets[i][key] = el.value;
+      return;
+    }
+
+    if (key.startsWith('layout.')) {
+      widgets[i].layout = widgets[i].layout || {};
+      widgets[i].layout[key.split('.')[1]] = Number(el.value);
+      return;
+    }
+
+    if (key.startsWith('refresh.')) {
+      widgets[i].refresh = widgets[i].refresh || {};
+      const child = key.split('.')[1];
+      widgets[i].refresh[child] = child === 'minutes' ? Number(el.value) : el.value;
+      return;
+    }
+
+    if (key === 'integration.provider') {
+      widgets[i].integration = widgets[i].integration || {};
+      widgets[i].integration.provider = el.value;
+      return;
+    }
+
+    widgets[i].integration = widgets[i].integration || {};
+    widgets[i].integration.config = widgets[i].integration.config || {};
+    if (key === 'integration.config.source') {
+      widgets[i].integration.config.source = el.value;
+      return;
+    }
+    if (key === 'integration.config_json') {
+      try {
+        widgets[i].integration.config = JSON.parse(el.value || '{}');
+      } catch {
+      }
+    }
+  }
+
+  function removeWidget(i) {
+    widgets.splice(i, 1);
+    renderWidgets();
+  }
+
+  function syncWidgets() {
+    widgetsInput.value = JSON.stringify(widgets);
+  }
+
+  renderWidgets();
+</script>
+{% endif %}
+{% endblock %}

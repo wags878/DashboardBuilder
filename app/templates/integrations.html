@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Integrations</h2>
+<p class="muted">Default sources from the firmware are pre-seeded. Add alternate providers as presets for section configuration.</p>
+
+<div class="grid cols-2">
+  <div>
+    <h3>Add Integration Preset</h3>
+    <form method="post" action="/integrations/add">
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Slug</label>
+      <input type="text" name="slug" required>
+      <label>Category</label>
+      <input type="text" name="category" placeholder="weather, news, calendar" required>
+      <label>Provider</label>
+      <input type="text" name="provider" placeholder="accuweather" required>
+      <label>Auth Type</label>
+      <input type="text" name="auth_type" placeholder="none, api_key, oauth2" value="none">
+      <label>Docs URL</label>
+      <input type="text" name="docs_url" placeholder="https://...">
+      <label>Description</label>
+      <textarea name="description"></textarea>
+      <label>Config Template JSON</label>
+      <textarea name="config_template_json">{}</textarea>
+      <button class="btn" type="submit">Add Preset</button>
+    </form>
+  </div>
+  <div>
+    <h3>Suggested Enterprise Sources</h3>
+    <ul>
+      <li>Weather: AccuWeather, OpenWeather, WeatherAPI, Tomorrow.io</li>
+      <li>News: NewsAPI, NYTimes API, RSS providers</li>
+      <li>Calendar: Google Calendar, Microsoft Graph Calendar</li>
+      <li>Air quality: OpenAQ, IQAir</li>
+    </ul>
+  </div>
+</div>
+
+<h3 style="margin-top:18px">Preset Catalog</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Category</th>
+      <th>Provider</th>
+      <th>Auth</th>
+      <th>Config Template</th>
+      <th>Docs</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in presets %}
+    <tr>
+      <td>{{ p.name }} {% if p.is_default %}<span class="tag">default</span>{% endif %}<br><span class="muted">{{ p.slug }}</span></td>
+      <td>{{ p.category }}</td>
+      <td>{{ p.provider }}</td>
+      <td>{{ p.auth_type }}</td>
+      <td><code>{{ p.config_template }}</code></td>
+      <td>{% if p.docs_url %}<a href="{{ p.docs_url }}" target="_blank">docs</a>{% endif %}</td>
+      <td>
+        {% if not p.is_default %}
+        <form method="post" action="/integrations/delete" onsubmit="return confirm('Delete this preset?');">
+          <input type="hidden" name="preset_id" value="{{ p.id }}">
+          <button class="btn warn" type="submit">Delete</button>
+        </form>
+        {% else %}
+        <span class="muted">locked</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

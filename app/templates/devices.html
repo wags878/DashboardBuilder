@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Device Management</h2>
+<p class="muted">Add, remove, assign dashboards, and rotate device auth tokens.</p>
+
+<div class="grid cols-2">
+  <div>
+    <h3>Add Device</h3>
+    <form method="post" action="/devices/add">
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Panel Profile</label>
+      <input type="text" name="panel_profile" value="solum_ed057tc6_baseline">
+      <label>PlatformIO Env</label>
+      <input type="text" name="platformio_env" value="seeed_xiao_esp32c6_solum_baseline_locked">
+      <label><input type="checkbox" name="supports_direct_fetch" checked> Supports Direct Fetch</label>
+      <button class="btn" type="submit">Add Device</button>
+    </form>
+  </div>
+  <div>
+    <h3>Dashboards Available</h3>
+    <ul>
+      {% for d in dashboards %}
+      <li>{{ d.name }} <span class="tag">{{ d.id }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<h3 style="margin-top:18px">Device Inventory</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Profile</th>
+      <th>Env</th>
+      <th>Token</th>
+      <th>Assignment</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for device in devices %}
+    {% set assignment = assignment_by_device.get(device.id) %}
+    <tr>
+      <td>{{ device.name }}<br><span class="muted">{{ device.id }}</span></td>
+      <td>{{ device.status }}</td>
+      <td>{{ device.panel_profile }}</td>
+      <td>{{ device.platformio_env }}</td>
+      <td><code>{{ device.auth_token }}</code></td>
+      <td>
+        <form method="post" action="/devices/assign">
+          <input type="hidden" name="device_id" value="{{ device.id }}">
+          <label>Dashboard</label>
+          <select name="dashboard_id">
+            <option value="">(none)</option>
+            {% for d in dashboards %}
+            <option value="{{ d.id }}" {% if assignment and assignment.dashboard_id == d.id %}selected{% endif %}>{{ d.name }}</option>
+            {% endfor %}
+          </select>
+          <label><input type="checkbox" name="enabled" {% if assignment and assignment.enabled %}checked{% endif %}> Enabled</label>
+          <label>Override Panel Profile</label>
+          <input type="text" name="override_panel_profile" value="{{ assignment.overrides.get('panel_profile') if assignment else '' }}">
+          <label>Override PlatformIO Env</label>
+          <input type="text" name="override_platformio_env" value="{{ assignment.overrides.get('platformio_env') if assignment else '' }}">
+          <button class="btn secondary" type="submit">Save Assignment</button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/devices/rotate-token" style="margin-bottom:8px">
+          <input type="hidden" name="device_id" value="{{ device.id }}">
+          <button class="btn secondary" type="submit">Rotate Token</button>
+        </form>
+        <form method="post" action="/devices/delete" onsubmit="return confirm('Delete this device?');">
+          <input type="hidden" name="device_id" value="{{ device.id }}">
+          <button class="btn warn" type="submit">Delete Device</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

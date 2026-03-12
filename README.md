@@ -1,18 +1,28 @@
 # Dashboard Builder
 
-Standalone, containerized Python backend for managing e-ink dashboards and ESP32-C6 display devices.
+Standalone, containerized Python manager for ESP32-C6 e-ink dashboard devices.
 
-## What this starter includes
+## What is implemented
 
-- FastAPI service with SQLite persistence.
-- Data model for templates, dashboards, devices, and assignments.
-- Device heartbeat and signed manifest pull endpoints.
-- In-process scheduler to refresh manager-owned widget data.
-- Starter integrations:
-  - Open-Meteo weather
-  - RSS headlines
-  - Quote feed
-  - Google Calendar adapter stub
+- Basic authentication (login session) for web UI tabs.
+- Tabbed UI:
+  - `Designer`
+  - `Device Management`
+  - `Integrations`
+- Designer capabilities:
+  - base layout seeded from original firmware style
+  - title bar and footer enable/height controls
+  - section add/remove/resize (`x`,`y`,`w`,`h`)
+  - section templates: weather, headlines, quote of the day, calendar upcoming
+  - per-section refresh mode and configurable data source
+- Device management capabilities:
+  - add/remove devices
+  - assign dashboard to device
+  - per-device profile overrides
+  - rotate device token
+- Integrations catalog:
+  - original firmware defaults (Open-Meteo, wttr, NWS, Google/Reuters RSS, ZenQuotes)
+  - alternate templates (Google Calendar, AccuWeather, OpenWeather, WeatherAPI, NewsAPI)
 
 ## Quick start
 
@@ -22,38 +32,37 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Then open:
+Open:
 
-- `http://localhost:8000/health`
-- `http://localhost:8000/docs`
+- UI: `http://localhost:8000/`
+- API docs: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/health`
 
-## LXC host notes
+Default login:
 
-- Works fine when Docker is running inside your LXC container.
-- If your LXC host has storage constraints, map `DATA_DIR` to a larger mount path in `.env`.
-- Keep `./data` persisted so SQLite state survives container restarts.
+- Username: `admin`
+- Password: `change-me`
 
-## Example flow
+Change credentials in `.env`:
 
-1. Create a device via `POST /api/devices`.
-2. Create/inspect templates and dashboards (`/api/templates`, `/api/dashboards`).
-3. Assign dashboard to device via `POST /api/assignments`.
-4. Firmware sends heartbeat with `X-Device-Token`.
-5. Firmware pulls manifest from `/api/devices/{device_id}/manifest`.
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+- `SESSION_SECRET`
 
-## Project structure
+## LXC host note
 
-- `app/main.py`: API entrypoint and routes
-- `app/models.py`: SQLModel entities
-- `app/services/scheduler.py`: refresh loop
+If you run Docker remotely in an LXC host, use a remote Docker context:
+
+```bash
+docker context create personal --docker "host=ssh://<user>@<lxc-host-ip>"
+docker --context personal compose up --build -d
+```
+
+## Key paths
+
+- `app/main.py`: UI routes + API routes
+- `app/templates/`: web UI templates
 - `app/services/integrations.py`: provider adapters
-- `app/services/rendering.py`: manifest composition
-- `docs/ARCHITECTURE.md`: system design notes
-- `docs/FIRMWARE_CONTRACT.md`: device/backend JSON contract
-- `docs/CODEX_PLATFORMIO_PROMPTS.md`: copy/paste prompts for PlatformIO firmware work
-
-## Notes
-
-- This is standalone by design and does not require Home Assistant.
-- API boundaries are intentionally compatible with adding a Home Assistant bridge later.
-- Google Calendar OAuth/token storage is the next implementation step beyond this starter.
+- `app/services/rendering.py`: device manifest composition
+- `docs/FIRMWARE_CONTRACT.md`: manager/firmware contract
+- `docs/CODEX_PLATFORMIO_PROMPTS.md`: codex prompts for PlatformIO tasks
